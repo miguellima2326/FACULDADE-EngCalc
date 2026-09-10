@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: engcalc-api
+    runtime: node
+    buildCommand: npm ci && npm run build:core && npm run build:backend
+    startCommand: npm run start --workspace apps/backend
+    healthCheckPath: /api/health
