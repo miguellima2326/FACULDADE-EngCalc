@@ -1004,7 +1004,17 @@ export const DATA = {
           const caboAutomatico = modelos.slice().sort((a, b) => a.secao - b.secao).find(cable => Number(cable.izPorReferencia?.mt) >= Ic);
           const caboSelecionado = temCaboManual ? { secao: v.Sesc, Iz: v.Iz, fabricante: "Informado manualmente", modelo: "cabo candidato", diametroCondutor: null, diametroExterno: null } : caboAutomatico;
           const temCabo = Boolean(caboSelecionado);
-          if (!temCabo) throw new Error("Nenhum cabo MT cadastrado atende à tensão e à corrente calculadas. Informe seção/Iz manualmente ou cadastre um modelo compatível.");
+          if (!temCabo) {
+            const maior = modelos.slice().sort((a, b) => a.secao - b.secao).pop();
+            return { val: [
+              `── RECOMENDAÇÃO MT ─────────────────────`,
+              `Ic mínima por cabo: ${Ic.toFixed(2)} A`,
+              maior ? `Maior seção cadastrada: ${maior.secao} mm² (Iz ${maior.izPorReferencia.mt} A)` : `Nenhum cabo MT cadastrado para ${v.V} V`,
+              `Seção mínima exata: não determinada sem tabela compatível`,
+              `→ cadastrar um cabo com Iz ≥ ${Ic.toFixed(2)} A ou informar seção/Iz manualmente`,
+              `⚠ resultado incompleto: falta modelo compatível no catálogo`,
+            ].join("\n"), unit: "", multi: true };
+          }
           const secaoSelecionada = caboSelecionado.secao;
           const IzSelecionado = temCaboManual ? caboSelecionado.Iz : caboSelecionado.izPorReferencia.mt;
           const diametroCondutor = caboSelecionado.diametroCondutor == null ? "não informado" : `${caboSelecionado.diametroCondutor} mm`;
@@ -1143,8 +1153,15 @@ export const DATA = {
           const caboSelecionado = temCaboManual ? { secao: v.Sesc, Iz: v.Iz, fabricante: "Informado manualmente", modelo: "cabo candidato", diametroCondutor: null, diametroExterno: null, fonte: "entrada do usuário" } : caboAutomatico;
           const temCabo = Boolean(caboSelecionado);
           if (!temCabo) {
-            const detalhe = referencia ? `Nenhum modelo cadastrado atende ${IcCabo.toFixed(2)} A por cabo na tabela de referência ${referencia}` : "Ainda não há tabela de ampacidade cadastrada para esta instalação";
-            throw new Error(`${detalhe}. Informe seção/Iz manualmente ou cadastre um modelo compatível.`);
+            const maior = candidatos.slice().sort((a, b) => a.secao - b.secao).pop();
+            return { val: [
+              `── RECOMENDAÇÃO BT ─────────────────────`,
+              `Ic mínima por cabo: ${IcCabo.toFixed(2)} A`,
+              maior ? `Maior seção cadastrada: ${maior.secao} mm² (Iz ${maior.izPorReferencia[referencia]} A)` : `Nenhum cabo cadastrado para esta instalação`,
+              `Seção mínima exata: não determinada sem tabela compatível`,
+              `→ cadastrar um cabo com Iz ≥ ${IcCabo.toFixed(2)} A ou informar seção/Iz manualmente`,
+              `⚠ resultado incompleto: falta modelo compatível no catálogo`,
+            ].join("\n"), unit: "", multi: true };
           }
           const secaoSelecionada = caboSelecionado.secao;
           const IzSelecionado = temCaboManual ? caboSelecionado.Iz : caboSelecionado.izPorReferencia[referencia];
