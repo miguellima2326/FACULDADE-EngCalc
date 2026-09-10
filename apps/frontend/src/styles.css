@@ -274,7 +274,7 @@ main.wrap { padding-top: 22px; padding-bottom: var(--carimbo-h, 140px); }
 
 /* DADOS — linhas de entrada */
 .field-row {
-  display: grid; grid-template-columns: 1fr 128px; gap: 10px 12px;
+  display: grid; grid-template-columns: 1fr 160px; gap: 10px 12px;
   align-items: center; padding: 7px 0;
   border-bottom: 1px dotted var(--rule);
 }
@@ -283,11 +283,11 @@ main.wrap { padding-top: 22px; padding-bottom: var(--carimbo-h, 140px); }
   font-size: 12.5px; color: var(--ink-2); line-height: 1.3;
 }
 .field-label .sym { font-family: var(--font-mono); color: var(--ink); font-weight: 600; }
-.field-input-wrap { position: relative; display: flex; align-items: center; }
+.field-input-wrap { position: relative; display: flex; align-items: center; gap: 6px; }
 .field-input-wrap input {
-  width: 100%; height: 40px; text-align: right;
+  width: 100%; min-width: 0; height: 40px; text-align: right;
   background: var(--sheet-2); border: 1px solid var(--rule);
-  padding: 0 46px 0 12px;
+  padding: 0 10px;
   font-family: var(--font-mono); font-size: 15px; color: var(--ink);
   outline: none; transition: border-color var(--t), box-shadow var(--t), background var(--t);
   -moz-appearance: textfield;
@@ -311,7 +311,7 @@ main.wrap { padding-top: 22px; padding-bottom: var(--carimbo-h, 140px); }
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 .field-unit {
-  position: absolute; right: 10px; pointer-events: none;
+  flex: 0 0 auto; pointer-events: none; white-space: nowrap;
   font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-3);
 }
 .field-row.has-select { grid-template-columns: 1fr 240px; }

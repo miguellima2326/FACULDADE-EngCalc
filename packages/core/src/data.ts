@@ -890,8 +890,8 @@ export const DATA = {
           { id: "L",     label: "L — comprimento do trecho",          ph: "115",   hint: "m"      },
           { id: "K",     label: "K — queda de tensão do cabo (fabr.)", ph: "0.15",  hint: "V/A·km" },
           { id: "dVadm", label: "ΔV adm. — queda de tensão admissível",ph: "4",     hint: "%"      },
-          { id: "Sesc",  label: "seção do cabo candidato",             ph: "185",   hint: "mm²"    },
-          { id: "Iz",    label: "Iz — capacidade de condução (fabr.)", ph: "510",   hint: "A"      },
+          { id: "Sesc",  label: "seção do cabo candidato (opcional)",  ph: "185",   hint: "mm²"    },
+          { id: "Iz",    label: "Iz — capacidade de condução do fabr. (opcional)", ph: "510", hint: "A" },
         ],
         calc(v) {
           if (v.S <= 0) throw new Error("Potência S deve ser > 0");
@@ -908,8 +908,12 @@ export const DATA = {
           if (v.L < 0) throw new Error("Distância L deve ser ≥ 0");
           if (v.K < 0) throw new Error("K deve ser ≥ 0");
           if (v.dVadm <= 0) throw new Error("ΔV admissível deve ser > 0");
-          if (v.Sesc <= 0) throw new Error("Seção do cabo deve ser > 0");
-          if (v.Iz <= 0) throw new Error("Iz deve ser > 0");
+          // Sesc/Iz são opcionais: o técnico normalmente ainda não sabe esses valores —
+          // é justamente o que este cálculo existe para apontar (via Ic, abaixo). Só
+          // exigimos os dois quando pelo menos um deles for preenchido, pra validar o cabo escolhido.
+          const temCabo = v.Sesc > 0 || v.Iz > 0;
+          if (v.Sesc > 0 && !(v.Iz > 0)) throw new Error("Informe também o Iz do cabo candidato (ou deixe os dois em branco)");
+          if (v.Iz > 0 && !(v.Sesc > 0)) throw new Error("Informe também a seção do cabo candidato (ou deixe os dois em branco)");
 
           // Corrente nominal trifásica — In = 1000·S(kVA) / (V·√3)
           const In = (1000 * v.S) / (v.V * Math.sqrt(3));   // A
@@ -922,35 +926,36 @@ export const DATA = {
 
           // Queda de tensão — ΔV% = K·L·In / (10·V)  (K em V/A·km, L em m)
           const dV = (v.K * v.L * In) / (10 * v.V);          // %
+          const dvOk = dV <= v.dVadm;
 
-          const ampOk = v.Iz >= Ic;
-          const dvOk  = dV <= v.dVadm;
+          const lines = [
+            `── CONDIÇÕES DE INSTALAÇÃO ───────────`,
+            `Método:             ${labelInstalacao(v.instalacao)}`,
+            enterrado
+              ? `Temp. do solo:      ${v.tempSolo.toFixed(1)} °C   → Kt=${Kt.toFixed(2)}`
+              : `Temp. ambiente:     ${v.tempSolo.toFixed(1)} °C   → Kt=${Kt.toFixed(2)}`,
+            enterrado ? `Resistiv. do solo:  ${v.resSolo.toFixed(2)} K·m/W → Ks=${Ks.toFixed(2)}` : `Resistiv. do solo:  não aplicável (ao ar)`,
+            enterrado ? `Profundidade:       ${v.profundidade.toFixed(2)} m     → Kp=${Kp.toFixed(2)}` : `Profundidade:       não aplicável (ao ar)`,
+            `Circuitos agrupados:${v.nCircuitos}   → Kg=${Kg.toFixed(2)}`,
+            `Fc calculado = 1/(Kt·Ks·Kp·Kg) = ${Fc.toFixed(3)}`,
+            `⚠ fatores de referência aproximados — confirme na tabela do fabricante/NBR 5410`,
+            `── CORRENTES ────────────────────────`,
+            `In (nominal):    ${In.toFixed(2)} A`,
+            `Ic (corrigida):  ${Ic.toFixed(2)} A   (Ic = In × Fc = In × ${Fc.toFixed(3)})`,
+            `→ é esta a corrente (Ic) que o cabo escolhido precisa suportar: procure na tabela do fabricante uma seção com Iz ≥ Ic`,
+            `── QUEDA DE TENSÃO ──────────────────`,
+            `ΔV calculada:    ${dV.toFixed(3)} %   (admissível: ${v.dVadm.toFixed(2)} %)`,
+            dvOk ? `✓ ΔV ≤ ΔV admissível` : `✗ ΔV > ΔV admissível — reduza L, aumente a seção ou revise K`,
+          ];
 
-          // Fator determinante — compara a proximidade de cada critério do seu limite
-          const ratioAmp = Ic / v.Iz;
-          const ratioDv  = dV / v.dVadm;
-          const determinante = ratioAmp >= ratioDv ? "Capacidade de Condução" : "Queda de Tensão";
-
-          const margAmp = ((v.Iz - Ic) / Ic) * 100;
-
-          return {
-            val: [
-              `── CONDIÇÕES DE INSTALAÇÃO ───────────`,
-              `Método:             ${labelInstalacao(v.instalacao)}`,
-              enterrado
-                ? `Temp. do solo:      ${v.tempSolo.toFixed(1)} °C   → Kt=${Kt.toFixed(2)}`
-                : `Temp. ambiente:     ${v.tempSolo.toFixed(1)} °C   → Kt=${Kt.toFixed(2)}`,
-              enterrado ? `Resistiv. do solo:  ${v.resSolo.toFixed(2)} K·m/W → Ks=${Ks.toFixed(2)}` : `Resistiv. do solo:  não aplicável (ao ar)`,
-              enterrado ? `Profundidade:       ${v.profundidade.toFixed(2)} m     → Kp=${Kp.toFixed(2)}` : `Profundidade:       não aplicável (ao ar)`,
-              `Circuitos agrupados:${v.nCircuitos}   → Kg=${Kg.toFixed(2)}`,
-              `Fc calculado = 1/(Kt·Ks·Kp·Kg) = ${Fc.toFixed(3)}`,
-              `⚠ fatores de referência aproximados — confirme na tabela do fabricante/NBR 5410`,
-              `── CORRENTES ────────────────────────`,
-              `In (nominal):    ${In.toFixed(2)} A`,
-              `Ic (corrigida):  ${Ic.toFixed(2)} A   (Ic = In × Fc = In × ${Fc.toFixed(3)})`,
-              `── QUEDA DE TENSÃO ──────────────────`,
-              `ΔV calculada:    ${dV.toFixed(3)} %   (admissível: ${v.dVadm.toFixed(2)} %)`,
-              dvOk ? `✓ ΔV ≤ ΔV admissível` : `✗ ΔV > ΔV admissível — reduza L, aumente a seção ou revise K`,
+          if (temCabo) {
+            const ampOk = v.Iz >= Ic;
+            // Fator determinante — compara a proximidade de cada critério do seu limite
+            const ratioAmp = Ic / v.Iz;
+            const ratioDv  = dV / v.dVadm;
+            const determinante = ratioAmp >= ratioDv ? "Capacidade de Condução" : "Queda de Tensão";
+            const margAmp = ((v.Iz - Ic) / Ic) * 100;
+            lines.push(
               `── VERIFICAÇÃO DO CABO ${v.Sesc} mm² ─────`,
               `Iz do cabo:      ${v.Iz.toFixed(0)} A`,
               `Ic requerida:    ${Ic.toFixed(2)} A`,
@@ -961,10 +966,17 @@ export const DATA = {
               (ampOk && dvOk)
                 ? `✓ Cabo ${v.Sesc} mm² ATENDE aos critérios de MT`
                 : `✗ Cabo ${v.Sesc} mm² NÃO ATENDE — revisar seção/instalação`,
-            ].join("\n"),
-            unit: "",
-            multi: true,
-          };
+            );
+          } else {
+            lines.push(
+              `── ESCOLHA DO CABO ───────────────────`,
+              `Nenhum cabo candidato informado ainda.`,
+              `Consulte a tabela de ampacidade do fabricante e escolha uma seção com Iz ≥ ${Ic.toFixed(2)} A${dvOk ? " (a queda de tensão já está dentro do admissível para o K informado)" : ", e reveja também a queda de tensão (ΔV acima do admissível)"}.`,
+              `Depois preencha "seção do cabo candidato" e "Iz" acima para validar a escolha final.`,
+            );
+          }
+
+          return { val: lines.join("\n"), unit: "", multi: true };
         },
         result: "cabo MT",
       },
@@ -995,8 +1007,8 @@ export const DATA = {
           { id: "L",     label: "L — comprimento do trecho",           ph: "115",   hint: "m"      },
           { id: "K",     label: "K — queda de tensão do cabo (fabr.)", ph: "0.21",  hint: "V/A·km" },
           { id: "dVadm", label: "ΔV adm. — queda de tensão admissível",ph: "4",     hint: "%"      },
-          { id: "Sesc",  label: "seção do cabo candidato (por unidade)",ph: "240",  hint: "mm²"    },
-          { id: "Iz",    label: "Iz — capacidade de condução unitária",ph: "607",   hint: "A/cabo" },
+          { id: "Sesc",  label: "seção do cabo candidato (por unidade, opcional)",ph: "240", hint: "mm²"    },
+          { id: "Iz",    label: "Iz — capacidade de condução unitária (opcional)",ph: "607",  hint: "A/cabo" },
         ],
         calc(v) {
           if (v.S <= 0) throw new Error("Potência S deve ser > 0");
@@ -1014,8 +1026,12 @@ export const DATA = {
           if (v.L < 0) throw new Error("Distância L deve ser ≥ 0");
           if (v.K < 0) throw new Error("K deve ser ≥ 0");
           if (v.dVadm <= 0) throw new Error("ΔV admissível deve ser > 0");
-          if (v.Sesc <= 0) throw new Error("Seção do cabo deve ser > 0");
-          if (v.Iz <= 0) throw new Error("Iz deve ser > 0");
+          // Sesc/Iz são opcionais: o técnico normalmente ainda não sabe esses valores —
+          // é justamente o que este cálculo existe para apontar (via Ic/cabo, abaixo). Só
+          // exigimos os dois quando pelo menos um for preenchido, pra validar o cabo escolhido.
+          const temCabo = v.Sesc > 0 || v.Iz > 0;
+          if (v.Sesc > 0 && !(v.Iz > 0)) throw new Error("Informe também o Iz unitário do cabo candidato (ou deixe os dois em branco)");
+          if (v.Iz > 0 && !(v.Sesc > 0)) throw new Error("Informe também a seção do cabo candidato (ou deixe os dois em branco)");
 
           // Corrente nominal trifásica
           const In = (1000 * v.S) / (v.V * Math.sqrt(3));   // A
@@ -1029,36 +1045,37 @@ export const DATA = {
 
           // Queda de tensão — usa a corrente nominal por cabo (In/Np), não a corrigida
           const dV = (v.K * v.L * (In / v.Np)) / (10 * v.V);  // %
+          const dvOk = dV <= v.dVadm;
 
-          const IzTotal = v.Iz * v.Np;
-          const ampOk = v.Iz >= IcCabo;
-          const dvOk  = dV <= v.dVadm;
+          const lines = [
+            `── CONDIÇÕES DE INSTALAÇÃO ───────────`,
+            `Método:             ${labelInstalacao(v.instalacao)}`,
+            enterrado
+              ? `Temp. do solo:      ${v.tempSolo.toFixed(1)} °C   → Kt=${Kt.toFixed(2)}`
+              : `Temp. ambiente:     ${v.tempSolo.toFixed(1)} °C   → Kt=${Kt.toFixed(2)}`,
+            enterrado ? `Resistiv. do solo:  ${v.resSolo.toFixed(2)} K·m/W → Ks=${Ks.toFixed(2)}` : `Resistiv. do solo:  não aplicável (ao ar)`,
+            enterrado ? `Profundidade:       ${v.profundidade.toFixed(2)} m     → Kp=${Kp.toFixed(2)}` : `Profundidade:       não aplicável (ao ar)`,
+            `Circuitos agrupados:${v.nCircuitos}   → Kg=${Kg.toFixed(2)}`,
+            `Fc calculado = 1/(Kt·Ks·Kp·Kg) = ${Fc.toFixed(3)}`,
+            `⚠ fatores de referência aproximados — confirme na tabela do fabricante/NBR 5410`,
+            `── CORRENTES ────────────────────────`,
+            `In (nominal):       ${In.toFixed(2)} A`,
+            `Ic (corrigida):     ${Ic.toFixed(2)} A   (Ic = In × Fc = In × ${Fc.toFixed(3)})`,
+            `Ic por cabo:        ${IcCabo.toFixed(2)} A   (${v.Np} cabos/fase em paralelo)`,
+            `→ é esta a corrente (Ic por cabo) que cada cabo escolhido precisa suportar: procure na tabela do fabricante um cabo com Iz ≥ Ic/cabo`,
+            `── QUEDA DE TENSÃO ──────────────────`,
+            `ΔV calculada:       ${dV.toFixed(3)} %   (admissível: ${v.dVadm.toFixed(2)} %)`,
+            dvOk ? `✓ ΔV ≤ ΔV admissível` : `✗ ΔV > ΔV admissível — reduza L, aumente Np/seção ou revise K`,
+          ];
 
-          const ratioAmp = IcCabo / v.Iz;
-          const ratioDv  = dV / v.dVadm;
-          const determinante = ratioAmp >= ratioDv ? "Capacidade de Condução" : "Queda de Tensão";
-
-          const margAmp = ((v.Iz - IcCabo) / IcCabo) * 100;
-
-          return {
-            val: [
-              `── CONDIÇÕES DE INSTALAÇÃO ───────────`,
-              `Método:             ${labelInstalacao(v.instalacao)}`,
-              enterrado
-                ? `Temp. do solo:      ${v.tempSolo.toFixed(1)} °C   → Kt=${Kt.toFixed(2)}`
-                : `Temp. ambiente:     ${v.tempSolo.toFixed(1)} °C   → Kt=${Kt.toFixed(2)}`,
-              enterrado ? `Resistiv. do solo:  ${v.resSolo.toFixed(2)} K·m/W → Ks=${Ks.toFixed(2)}` : `Resistiv. do solo:  não aplicável (ao ar)`,
-              enterrado ? `Profundidade:       ${v.profundidade.toFixed(2)} m     → Kp=${Kp.toFixed(2)}` : `Profundidade:       não aplicável (ao ar)`,
-              `Circuitos agrupados:${v.nCircuitos}   → Kg=${Kg.toFixed(2)}`,
-              `Fc calculado = 1/(Kt·Ks·Kp·Kg) = ${Fc.toFixed(3)}`,
-              `⚠ fatores de referência aproximados — confirme na tabela do fabricante/NBR 5410`,
-              `── CORRENTES ────────────────────────`,
-              `In (nominal):       ${In.toFixed(2)} A`,
-              `Ic (corrigida):     ${Ic.toFixed(2)} A   (Ic = In × Fc = In × ${Fc.toFixed(3)})`,
-              `Ic por cabo:        ${IcCabo.toFixed(2)} A   (${v.Np} cabos/fase em paralelo)`,
-              `── QUEDA DE TENSÃO ──────────────────`,
-              `ΔV calculada:       ${dV.toFixed(3)} %   (admissível: ${v.dVadm.toFixed(2)} %)`,
-              dvOk ? `✓ ΔV ≤ ΔV admissível` : `✗ ΔV > ΔV admissível — reduza L, aumente Np/seção ou revise K`,
+          if (temCabo) {
+            const IzTotal = v.Iz * v.Np;
+            const ampOk = v.Iz >= IcCabo;
+            const ratioAmp = IcCabo / v.Iz;
+            const ratioDv  = dV / v.dVadm;
+            const determinante = ratioAmp >= ratioDv ? "Capacidade de Condução" : "Queda de Tensão";
+            const margAmp = ((v.Iz - IcCabo) / IcCabo) * 100;
+            lines.push(
               `── VERIFICAÇÃO DO CABO ${v.Sesc} mm² × ${v.Np} ────`,
               `Iz unitário:        ${v.Iz.toFixed(0)} A`,
               `Iz total (Iz×Np):   ${IzTotal.toFixed(0)} A`,
@@ -1070,10 +1087,17 @@ export const DATA = {
               (ampOk && dvOk)
                 ? `✓ ${v.Np}×${v.Sesc} mm² ATENDE aos critérios de BT`
                 : `✗ ${v.Np}×${v.Sesc} mm² NÃO ATENDE — revisar seção/Np`,
-            ].join("\n"),
-            unit: "",
-            multi: true,
-          };
+            );
+          } else {
+            lines.push(
+              `── ESCOLHA DO CABO ───────────────────`,
+              `Nenhum cabo candidato informado ainda.`,
+              `Consulte a tabela de ampacidade do fabricante e escolha, por cabo, uma seção com Iz ≥ ${IcCabo.toFixed(2)} A${dvOk ? " (a queda de tensão já está dentro do admissível para o K informado)" : ", e reveja também a queda de tensão (ΔV acima do admissível)"}.`,
+              `Depois preencha "seção do cabo candidato" e "Iz" acima para validar a escolha final.`,
+            );
+          }
+
+          return { val: lines.join("\n"), unit: "", multi: true };
         },
         result: "cabo BT",
       },
