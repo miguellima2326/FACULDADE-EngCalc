@@ -1,6 +1,6 @@
-import { DATA, ICONS } from "./data.js";
+import { DATA, ICONS, CABLE_CATALOG } from "./data.js";
 
-export { DATA, ICONS };
+export { DATA, ICONS, CABLE_CATALOG };
 
 export interface EngineResult {
   val: string;
