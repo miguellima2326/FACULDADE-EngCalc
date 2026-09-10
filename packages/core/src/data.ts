@@ -65,6 +65,14 @@ export const CABLE_CATALOG = [
     diametroCondutor: 18.4, diametroExterno: 55, temperaturaCondutor: 90,
     izPorReferencia: {},
     fonte: "https://www.nexans.com.br/pt/products/Transmission.and.Distribution/InsulatedAluminiumCablesForLowVoltage/XLPE.InsulatedCables/PVC.covere75298.html"
+  },
+  {
+    id: "memorial-mt-4160-cu-185", nivel: "MT", fabricante: "Projeto / memorial",
+    modelo: "Cabo unipolar Cu 4,16 kV — 185 mm²", material: "Cobre",
+    isolacao: "EPR", tensao: "4,16 kV", tensaoMin: 3600, tensaoMax: 5000,
+    secao: 185, diametroCondutor: null, diametroExterno: null, temperaturaCondutor: 90,
+    izPorReferencia: { mt: 510 },
+    fonte: "MC-5250.00-5144-700-ORD-203=0.xls / MC-887A-79-21651_R0.doc"
   }
 ];
 
@@ -946,6 +954,10 @@ export const DATA = {
           { id: "profundidade", label: "h — profundidade de instalação",ph: "0.7", hint: "m",
             dependsOn: { id: "instalacao", in: ["enterrado_direto","enterrado_duto"] } },
           { id: "nCircuitos", label: "n — circuitos/cabos agrupados", ph: "2",     hint: "circuitos" },
+          { id: "modeloCabo", label: "modelo do cabo (opcional)", type: "select", options: [
+            { value: "auto", label: "Automático — menor seção que atende" },
+            ...CABLE_CATALOG.filter(cable => cable.nivel === "MT").map(cable => ({ value: cable.id, label: `${cable.fabricante} — ${cable.modelo}` }))
+          ] },
           { id: "L",     label: "L — comprimento do trecho",          ph: "115",   hint: "m"      },
           { id: "K",     label: "K — queda de tensão do cabo (fabr.)", ph: "0.15",  hint: "V/A·km" },
           { id: "dVadm", label: "ΔV adm. — queda de tensão admissível",ph: "4",     hint: "%"      },
@@ -970,7 +982,7 @@ export const DATA = {
           // Sesc/Iz são opcionais: o técnico normalmente ainda não sabe esses valores —
           // é justamente o que este cálculo existe para apontar (via Ic, abaixo). Só
           // exigimos os dois quando pelo menos um deles for preenchido, pra validar o cabo escolhido.
-          const temCabo = v.Sesc > 0 || v.Iz > 0;
+          const temCaboManual = v.Sesc > 0 || v.Iz > 0;
           if (v.Sesc > 0 && !(v.Iz > 0)) throw new Error("Informe também o Iz do cabo candidato (ou deixe os dois em branco)");
           if (v.Iz > 0 && !(v.Sesc > 0)) throw new Error("Informe também a seção do cabo candidato (ou deixe os dois em branco)");
 
@@ -986,6 +998,17 @@ export const DATA = {
           // Queda de tensão — ΔV% = K·L·In / (10·V)  (K em V/A·km, L em m)
           const dV = (v.K * v.L * In) / (10 * v.V);          // %
           const dvOk = dV <= v.dVadm;
+          const modelos = v.modeloCabo && v.modeloCabo !== "auto"
+            ? CABLE_CATALOG.filter(cable => cable.id === v.modeloCabo)
+            : CABLE_CATALOG.filter(cable => cable.nivel === "MT" && v.V >= cable.tensaoMin && v.V <= cable.tensaoMax);
+          const caboAutomatico = modelos.slice().sort((a, b) => a.secao - b.secao).find(cable => Number(cable.izPorReferencia?.mt) >= Ic);
+          const caboSelecionado = temCaboManual ? { secao: v.Sesc, Iz: v.Iz, fabricante: "Informado manualmente", modelo: "cabo candidato", diametroCondutor: null, diametroExterno: null } : caboAutomatico;
+          const temCabo = Boolean(caboSelecionado);
+          if (!temCabo) throw new Error("Nenhum cabo MT cadastrado atende à tensão e à corrente calculadas. Informe seção/Iz manualmente ou cadastre um modelo compatível.");
+          const secaoSelecionada = caboSelecionado.secao;
+          const IzSelecionado = temCaboManual ? caboSelecionado.Iz : caboSelecionado.izPorReferencia.mt;
+          const diametroCondutor = caboSelecionado.diametroCondutor == null ? "não informado" : `${caboSelecionado.diametroCondutor} mm`;
+          const diametroExterno = caboSelecionado.diametroExterno == null ? "não informado" : `${caboSelecionado.diametroExterno} mm`;
 
           const lines = [
             `── CONDIÇÕES DE INSTALAÇÃO ───────────`,
@@ -1008,23 +1031,26 @@ export const DATA = {
           ];
 
           if (temCabo) {
-            const ampOk = v.Iz >= Ic;
+            const ampOk = IzSelecionado >= Ic;
             // Fator determinante — compara a proximidade de cada critério do seu limite
-            const ratioAmp = Ic / v.Iz;
+            const ratioAmp = Ic / IzSelecionado;
             const ratioDv  = dV / v.dVadm;
             const determinante = ratioAmp >= ratioDv ? "Capacidade de Condução" : "Queda de Tensão";
-            const margAmp = ((v.Iz - Ic) / Ic) * 100;
+            const margAmp = ((IzSelecionado - Ic) / Ic) * 100;
             lines.push(
-              `── VERIFICAÇÃO DO CABO ${v.Sesc} mm² ─────`,
-              `Iz do cabo:      ${v.Iz.toFixed(0)} A`,
+              `── CABO RECOMENDADO ${secaoSelecionada} mm² ─────`,
+              `Modelo:          ${caboSelecionado.fabricante} — ${caboSelecionado.modelo}`,
+              `Diâmetro condutor: ${diametroCondutor}`,
+              `Diâmetro externo:  ${diametroExterno}`,
+              `Iz do cabo:      ${IzSelecionado.toFixed(0)} A`,
               `Ic requerida:    ${Ic.toFixed(2)} A`,
               `Margem:          ${margAmp.toFixed(1)} %`,
               ampOk ? `✓ Iz ≥ Ic — capacidade de condução OK` : `✗ Iz < Ic — AUMENTAR SEÇÃO DO CABO`,
               `── RESULTADO ────────────────────────`,
               `Fator determinante: ${determinante}`,
               (ampOk && dvOk)
-                ? `✓ Cabo ${v.Sesc} mm² ATENDE aos critérios de MT`
-                : `✗ Cabo ${v.Sesc} mm² NÃO ATENDE — revisar seção/instalação`,
+                ? `✓ Cabo ${secaoSelecionada} mm² ATENDE aos critérios de MT`
+                : `✗ Cabo ${secaoSelecionada} mm² NÃO ATENDE — revisar seção/instalação`,
             );
           } else {
             lines.push(
@@ -1205,7 +1231,6 @@ export const DATA = {
           if (v.Icc <= 0) throw new Error("Icc deve ser > 0");
           if (v.t <= 0) throw new Error("Tempo t deve ser > 0");
           if (v.k <= 0) throw new Error("Constante k deve ser > 0");
-          if (v.Sesc <= 0) throw new Error("Seção do cabo deve ser > 0");
 
           const IccA = v.Icc * 1000;                          // A
           const Smin = (IccA * Math.sqrt(v.t)) / v.k;          // mm²
@@ -1213,7 +1238,7 @@ export const DATA = {
           const serieComercial = [1.5,2.5,4,6,10,16,25,35,50,70,95,120,150,185,240,300,400,500,630];
           const Ssug = serieComercial.find(s => s >= Smin) || serieComercial[serieComercial.length - 1];
 
-          const ok = v.Sesc >= Smin;
+          const ok = v.Sesc > 0 ? v.Sesc >= Smin : true;
 
           return {
             val: [
@@ -1224,8 +1249,10 @@ export const DATA = {
               `── SEÇÃO ─────────────────────────────`,
               `Smín exigida:     ${Smin.toFixed(2)} mm²`,
               `Seção comercial sugerida: ${Ssug} mm²`,
-              `Seção candidata:  ${v.Sesc.toFixed(1)} mm²`,
-              ok ? `✓ Seção candidata suporta a Icc` : `✗ Seção candidata INSUFICIENTE — usar ≥ ${Ssug} mm²`,
+              v.Sesc > 0 ? `Seção informada:   ${v.Sesc.toFixed(1)} mm²` : `Seção informada:   não informada`,
+              v.Sesc > 0
+                ? (ok ? `✓ Seção informada suporta a Icc` : `✗ Seção informada INSUFICIENTE — usar ≥ ${Ssug} mm²`)
+                : `→ Recomendação automática: usar no mínimo ${Ssug} mm²`,
             ].join("\n"),
             unit: "",
             multi: true,
