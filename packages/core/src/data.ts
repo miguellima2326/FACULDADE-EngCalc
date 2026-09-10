@@ -9,6 +9,41 @@
 /* ═══════════════════════════════════════════════════
    ÍCONES SVG
 ═══════════════════════════════════════════════════ */
+export const CABLE_CATALOG = [
+  {
+    id: "memorial-240-cu", fabricante: "Projeto / memorial",
+    modelo: "Cabo unipolar Cu 0,6/1 kV — 240 mm²", material: "Cobre",
+    isolacao: "Conforme memorial", tensao: "0,6/1 kV", secao: 240,
+    diametroCondutor: null, diametroExterno: null, temperaturaCondutor: null,
+    izPorReferencia: { leito_bandeja: 607 },
+    fonte: "MC-5250.00-5144-700-ORD-203=0.xls"
+  },
+  {
+    id: "memorial-185-cu", fabricante: "Projeto / memorial",
+    modelo: "Cabo unipolar Cu 0,6/1 kV — 185 mm²", material: "Cobre",
+    isolacao: "Conforme memorial", tensao: "0,6/1 kV", secao: 185,
+    diametroCondutor: null, diametroExterno: null, temperaturaCondutor: null,
+    izPorReferencia: { leito_bandeja: 510 },
+    fonte: "MC-5250.00-5144-700-ORD-203=0.xls / MC-887A-79-21651_R0.doc"
+  },
+  {
+    id: "nexans-hepr-pvc-cu-240", fabricante: "Nexans",
+    modelo: "HEPR-PVC 0,6/1 kV 1x240 mm²", material: "Cobre",
+    isolacao: "HEPR / PVC ST2", tensao: "0,6/1 kV", secao: 240,
+    diametroCondutor: 19.76, diametroExterno: 27, temperaturaCondutor: 90,
+    izPorReferencia: { A1: 424, A2: 386, B1: 546, B2: 462, C: 599, D: 419, E: 641, F: 679 },
+    fonte: "https://www.nexans.com.br/pt/products/Construction/Insulated-copper-cables-for-low-voltage/Standard.cables.for.general.use/Nexans-HEP37553/product~ID540476285~.html"
+  },
+  {
+    id: "nexans-xlpe-pvc-al-240", fabricante: "Nexans",
+    modelo: "XLPE-PVC 0,6/1 kV 1x240 mm²", material: "Alumínio",
+    isolacao: "XLPE / PVC", tensao: "0,6/1 kV", secao: 240,
+    diametroCondutor: 18.4, diametroExterno: 55, temperaturaCondutor: 90,
+    izPorReferencia: {},
+    fonte: "https://www.nexans.com.br/pt/products/Transmission.and.Distribution/InsulatedAluminiumCablesForLowVoltage/XLPE.InsulatedCables/PVC.covere75298.html"
+  }
+];
+
 export const ICONS = {
   tool:     `<svg viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>`,
   cpu:      `<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="2" x2="9" y2="4"/><line x1="15" y1="2" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="22"/><line x1="15" y1="20" x2="15" y2="22"/><line x1="2" y1="9" x2="4" y2="9"/><line x1="2" y1="15" x2="4" y2="15"/><line x1="20" y1="9" x2="22" y2="9"/><line x1="20" y1="15" x2="22" y2="15"/></svg>`,
