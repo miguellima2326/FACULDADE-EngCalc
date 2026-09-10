@@ -373,9 +373,16 @@ main.wrap { padding-top: 22px; padding-bottom: var(--carimbo-h, 140px); }
 
 /* RESULTADO — relatório multi-linha */
 .report {
-  font-family: var(--font-mono); font-size: 12px; line-height: 1.85;
-  padding: 14px 16px; overflow-x: auto; color: var(--ink);
-  white-space: pre; tab-size: 2;
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 24px; align-items: start;
+  font-family: var(--font-mono); font-size: 11px; line-height: 1.45;
+  padding: 12px 16px; overflow: hidden; color: var(--ink);
+  white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 2;
+}
+.report-line { min-width: 0; padding: 1px 0; }
+.report-section {
+  grid-column: 1 / -1; color: var(--ink-3); letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--rule); margin: 4px 0 1px;
 }
 .report .rl-sec {
   display: block; color: var(--ink-3); letter-spacing: 0.06em;
@@ -537,7 +544,7 @@ body.sidebar-locked { overflow: hidden; }
   .cr-cell { padding: 8px 10px; }
   .cr-v { font-size: 13px; }
   .result-value { font-size: 26px; }
-  .report { font-size: 11px; }
+  .report { grid-template-columns: 1fr; font-size: 11px; gap: 0; }
 }
 @media (max-width: 380px) {
   .calc-item, .hist-item { grid-template-columns: 30px 1fr; }
