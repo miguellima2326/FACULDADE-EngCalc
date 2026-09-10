@@ -2,7 +2,12 @@ import { createServer } from "node:http";
 import { calculate, DATA } from "@engcalc/core";
 
 const json = (response: import("node:http").ServerResponse, status: number, body: unknown) => {
-  response.writeHead(status, { "content-type": "application/json; charset=utf-8", "access-control-allow-origin": "*" });
+  response.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET, POST, OPTIONS",
+    "access-control-allow-headers": "Content-Type",
+  });
   response.end(JSON.stringify(body));
 };
 
