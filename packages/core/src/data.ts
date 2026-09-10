@@ -954,10 +954,6 @@ export const DATA = {
           { id: "profundidade", label: "h — profundidade de instalação",ph: "0.7", hint: "m",
             dependsOn: { id: "instalacao", in: ["enterrado_direto","enterrado_duto"] } },
           { id: "nCircuitos", label: "n — circuitos/cabos agrupados", ph: "2",     hint: "circuitos" },
-          { id: "modeloCabo", label: "modelo do cabo (opcional)", type: "select", options: [
-            { value: "auto", label: "Automático — menor seção que atende" },
-            ...CABLE_CATALOG.filter(cable => cable.nivel === "MT").map(cable => ({ value: cable.id, label: `${cable.fabricante} — ${cable.modelo}` }))
-          ] },
           { id: "L",     label: "L — comprimento do trecho",          ph: "115",   hint: "m"      },
           { id: "K",     label: "K — queda de tensão do cabo (fabr.)", ph: "0.15",  hint: "V/A·km" },
           { id: "dVadm", label: "ΔV adm. — queda de tensão admissível",ph: "4",     hint: "%"      },
@@ -997,29 +993,12 @@ export const DATA = {
 
           // Queda de tensão — ΔV% = K·L·In / (10·V)  (K em V/A·km, L em m)
           const dV = (v.K * v.L * In) / (10 * v.V);          // %
-          const dvOk = dV <= v.dVadm;
-          const modelos = v.modeloCabo && v.modeloCabo !== "auto"
-            ? CABLE_CATALOG.filter(cable => cable.id === v.modeloCabo)
-            : CABLE_CATALOG.filter(cable => cable.nivel === "MT" && v.V >= cable.tensaoMin && v.V <= cable.tensaoMax);
-          const caboAutomatico = modelos.slice().sort((a, b) => a.secao - b.secao).find(cable => Number(cable.izPorReferencia?.mt) >= Ic);
-          const caboSelecionado = temCaboManual ? { secao: v.Sesc, Iz: v.Iz, fabricante: "Informado manualmente", modelo: "cabo candidato", diametroCondutor: null, diametroExterno: null } : caboAutomatico;
+          const dvOk = dV <= v.dVadm;          const caboSelecionado = temCaboManual ? { secao: v.Sesc, Iz: v.Iz, fabricante: "Informado manualmente", modelo: "cabo candidato", diametroCondutor: null, diametroExterno: null } : null;
           const temCabo = Boolean(caboSelecionado);
-          if (!temCabo) {
-            const maior = modelos.slice().sort((a, b) => a.secao - b.secao).pop();
-            return { val: [
-              `── RECOMENDAÇÃO MT ─────────────────────`,
-              `Ic mínima por cabo: ${Ic.toFixed(2)} A`,
-              maior ? `Maior seção cadastrada: ${maior.secao} mm² (Iz ${maior.izPorReferencia.mt} A)` : `Nenhum cabo MT cadastrado para ${v.V} V`,
-              `Seção mínima exata: não determinada sem tabela compatível`,
-              `→ cadastrar um cabo com Iz ≥ ${Ic.toFixed(2)} A ou informar seção/Iz manualmente`,
-              `⚠ resultado incompleto: falta modelo compatível no catálogo`,
-            ].join("\n"), unit: "", multi: true };
-          }
-          const secaoSelecionada = caboSelecionado.secao;
-          const IzSelecionado = temCaboManual ? caboSelecionado.Iz : caboSelecionado.izPorReferencia.mt;
-          const diametroCondutor = caboSelecionado.diametroCondutor == null ? "não informado" : `${caboSelecionado.diametroCondutor} mm`;
-          const diametroExterno = caboSelecionado.diametroExterno == null ? "não informado" : `${caboSelecionado.diametroExterno} mm`;
-
+          const secaoSelecionada = temCabo ? caboSelecionado.secao : 0;
+          const IzSelecionado = temCabo ? caboSelecionado.Iz : 0;
+          const diametroCondutor = temCabo && caboSelecionado.diametroCondutor != null ? `${caboSelecionado.diametroCondutor} mm` : "não informado";
+          const diametroExterno = temCabo && caboSelecionado.diametroExterno != null ? `${caboSelecionado.diametroExterno} mm` : "não informado";
           const lines = [
             `── CONDIÇÕES DE INSTALAÇÃO ───────────`,
             `Método:             ${labelInstalacao(v.instalacao)}`,
@@ -1061,13 +1040,13 @@ export const DATA = {
               (ampOk && dvOk)
                 ? `✓ Cabo ${secaoSelecionada} mm² ATENDE aos critérios de MT`
                 : `✗ Cabo ${secaoSelecionada} mm² NÃO ATENDE — revisar seção/instalação`,
-            );
-          } else {
+            );          } else {
             lines.push(
-              `── ESCOLHA DO CABO ───────────────────`,
-              `Nenhum cabo candidato informado ainda.`,
-              `Consulte a tabela de ampacidade do fabricante e escolha uma seção com Iz ≥ ${Ic.toFixed(2)} A${dvOk ? " (a queda de tensão já está dentro do admissível para o K informado)" : ", e reveja também a queda de tensão (ΔV acima do admissível)"}.`,
-              `Depois preencha "seção do cabo candidato" e "Iz" acima para validar a escolha final.`,
+              `── REQUISITOS DO CABO MT ─────────────────`,
+              `Iz mínimo necessário: ${Ic.toFixed(2)} A`,
+              `Seção mínima: depende da tabela do fabricante e do tipo de cabo`,
+              `→ procure um cabo MT com Iz ≥ ${Ic.toFixed(2)} A para ${v.V} V`,
+              `⚠ diâmetro e seção comercial devem ser confirmados no catálogo escolhido`,
             );
           }
 
@@ -1099,10 +1078,6 @@ export const DATA = {
             dependsOn: { id: "instalacao", in: ["enterrado_direto","enterrado_duto"] } },
           { id: "nCircuitos", label: "n — circuitos/cabos agrupados (inclua Np)", ph: "6", hint: "circuitos" },
           { id: "Np",    label: "Np — cabos em paralelo por fase",     ph: "6",     hint: "cabos"  },
-          { id: "modeloCabo", label: "modelo do cabo (opcional)", type: "select", options: [
-            { value: "auto", label: "Automático — menor seção que atende" },
-            ...CABLE_CATALOG.map(cable => ({ value: cable.id, label: `${cable.fabricante} — ${cable.modelo}` }))
-          ] },
           { id: "L",     label: "L — comprimento do trecho",           ph: "115",   hint: "m"      },
           { id: "K",     label: "K — queda de tensão do cabo (fabr.)", ph: "0.21",  hint: "V/A·km" },
           { id: "dVadm", label: "ΔV adm. — queda de tensão admissível",ph: "4",     hint: "%"      },
@@ -1144,30 +1119,12 @@ export const DATA = {
 
           // Queda de tensão — usa a corrente nominal por cabo (In/Np), não a corrigida
           const dV = (v.K * v.L * (In / v.Np)) / (10 * v.V);  // %
-          const dvOk = dV <= v.dVadm;
-          const referenciaPorInstalacao = { enterrado_direto: "enterrado_direto", enterrado_duto: "enterrado_duto", ao_ar: "E" };
-          const referencia = referenciaPorInstalacao[v.instalacao];
-          const modelos = v.modeloCabo && v.modeloCabo !== "auto" ? CABLE_CATALOG.filter(cable => cable.id === v.modeloCabo) : CABLE_CATALOG;
-          const candidatos = referencia ? modelos.filter(cable => Number(cable.izPorReferencia?.[referencia]) > 0) : [];
-          const caboAutomatico = candidatos.slice().sort((a, b) => a.secao - b.secao).find(cable => cable.izPorReferencia[referencia] >= IcCabo);
-          const caboSelecionado = temCaboManual ? { secao: v.Sesc, Iz: v.Iz, fabricante: "Informado manualmente", modelo: "cabo candidato", diametroCondutor: null, diametroExterno: null, fonte: "entrada do usuário" } : caboAutomatico;
+          const dvOk = dV <= v.dVadm;          const caboSelecionado = temCaboManual ? { secao: v.Sesc, Iz: v.Iz, fabricante: "Informado manualmente", modelo: "cabo candidato", diametroCondutor: null, diametroExterno: null } : null;
           const temCabo = Boolean(caboSelecionado);
-          if (!temCabo) {
-            const maior = candidatos.slice().sort((a, b) => a.secao - b.secao).pop();
-            return { val: [
-              `── RECOMENDAÇÃO BT ─────────────────────`,
-              `Ic mínima por cabo: ${IcCabo.toFixed(2)} A`,
-              maior ? `Maior seção cadastrada: ${maior.secao} mm² (Iz ${maior.izPorReferencia[referencia]} A)` : `Nenhum cabo cadastrado para esta instalação`,
-              `Seção mínima exata: não determinada sem tabela compatível`,
-              `→ cadastrar um cabo com Iz ≥ ${IcCabo.toFixed(2)} A ou informar seção/Iz manualmente`,
-              `⚠ resultado incompleto: falta modelo compatível no catálogo`,
-            ].join("\n"), unit: "", multi: true };
-          }
-          const secaoSelecionada = caboSelecionado.secao;
-          const IzSelecionado = temCaboManual ? caboSelecionado.Iz : caboSelecionado.izPorReferencia[referencia];
-          const diametroCondutor = caboSelecionado.diametroCondutor == null ? "não informado" : `${caboSelecionado.diametroCondutor} mm`;
-          const diametroExterno = caboSelecionado.diametroExterno == null ? "não informado" : `${caboSelecionado.diametroExterno} mm`;
-
+          const secaoSelecionada = temCabo ? caboSelecionado.secao : 0;
+          const IzSelecionado = temCabo ? caboSelecionado.Iz : 0;
+          const diametroCondutor = temCabo && caboSelecionado.diametroCondutor != null ? `${caboSelecionado.diametroCondutor} mm` : "não informado";
+          const diametroExterno = temCabo && caboSelecionado.diametroExterno != null ? `${caboSelecionado.diametroExterno} mm` : "não informado";
           const lines = [
             `── CONDIÇÕES DE INSTALAÇÃO ───────────`,
             `Método:             ${labelInstalacao(v.instalacao)}`,
@@ -1211,13 +1168,13 @@ export const DATA = {
               (ampOk && dvOk)
                 ? `✓ ${v.Np}×${secaoSelecionada} mm² ATENDE aos critérios de BT`
                 : `✗ ${v.Np}×${secaoSelecionada} mm² NÃO ATENDE — revisar seção/Np`,
-            );
-          } else {
+            );          } else {
             lines.push(
-              `── ESCOLHA DO CABO ───────────────────`,
-              `Nenhum cabo candidato informado ainda.`,
-              `Consulte a tabela de ampacidade do fabricante e escolha, por cabo, uma seção com Iz ≥ ${IcCabo.toFixed(2)} A${dvOk ? " (a queda de tensão já está dentro do admissível para o K informado)" : ", e reveja também a queda de tensão (ΔV acima do admissível)"}.`,
-              `Depois preencha "seção do cabo candidato" e "Iz" acima para validar a escolha final.`,
+              `── REQUISITOS DO CABO BT ─────────────────`,
+              `Iz mínimo necessário por cabo: ${IcCabo.toFixed(2)} A`,
+              `Seção mínima: depende da tabela do fabricante e do método de instalação`,
+              `→ procure um cabo BT com Iz ≥ ${IcCabo.toFixed(2)} A para esta instalação`,
+              `⚠ diâmetro e seção comercial devem ser confirmados no catálogo escolhido`,
             );
           }
 
