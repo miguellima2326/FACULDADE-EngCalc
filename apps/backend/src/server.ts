@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { calculate, DATA } from "@engcalc/core";
+import { calculate, DATA, CABLE_CATALOG } from "@engcalc/core";
 
 const json = (response: import("node:http").ServerResponse, status: number, body: unknown) => {
   response.writeHead(status, {
@@ -18,6 +18,9 @@ const server = createServer(async (request, response) => {
   if (request.method === "GET" && url.pathname === "/api/catalog") {
     const catalog = Object.entries(DATA).map(([id, area]) => ({ id, label: area.label, icon: area.icon, calculations: area.calcs.map((item: any) => ({ ...item, calc: undefined })) }));
     return json(response, 200, catalog);
+  }
+  if (request.method === "GET" && url.pathname === "/api/cable-catalog") {
+    return json(response, 200, CABLE_CATALOG);
   }
   const match = url.pathname.match(/^\/api\/calculations\/([^/]+)\/([^/]+)$/);
   if (request.method === "POST" && match) {
