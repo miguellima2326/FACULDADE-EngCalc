@@ -35,8 +35,11 @@ function Worksheet({ calc, areaKey, onSaved }: { calc: any; areaKey: string; onS
   const update = (id: string, value: string) => setValues(current => ({ ...current, [id]: value }));
   const run = async () => {
     try {
-      const parsed: Record<string, number | string> = {};
-      for (const field of calc.fields) parsed[field.id] = field.type === "select" ? selected(field.id) : Number(values[field.id]);
+      const parsed: Record<string, number | string | null> = {};
+      for (const field of calc.fields) {
+        const raw = (values[field.id] ?? "").trim();
+        parsed[field.id] = field.type === "select" ? selected(field.id) : raw === "" ? null : Number(raw.replace(",", "."));
+      }
       const apiUrl = import.meta.env.VITE_API_URL || "";
       const response = await fetch(`${apiUrl}/api/calculations/${areaKey}/${calc.id}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ values: parsed }) });
       const body = await response.json();
