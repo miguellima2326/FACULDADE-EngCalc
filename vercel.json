@@ -1,5 +1,19 @@
 {
-  "buildCommand": "npm run build:core && npm run build:frontend",
+  "buildCommand": "npm run build",
   "outputDirectory": "apps/frontend/dist",
-  "framework": "vite"
+  "framework": "vite",
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api?__path=$1"
+    }
+  ],
+  "functions": {
+    "api/index.ts": {
+      "includeFiles": "apps/backend/dist/**"
+    }
+  },
+  "regions": [
+    "gru1"
+  ]
 }
