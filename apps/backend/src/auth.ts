@@ -1,5 +1,6 @@
 import { betterAuth } from "better-auth";
 import { admin } from "better-auth/plugins";
+import { createAuthMiddleware } from "better-auth/api";
 import { getPool } from "./db.js";
 
 /**
@@ -14,6 +15,47 @@ import { getPool } from "./db.js";
  * - Plugin admin: papéis, banir (R8) e rotas /api/auth/admin/* protegidas por papel (R9).
  */
 let instance: ReturnType<typeof createAuth> | null = null;
+
+/* ── Spec 011 — registro de atividades administrativas ── */
+const AUDITED: Record<string, string> = {
+  "/admin/create-user": "cadastrou usuário",
+  "/admin/set-role": "alterou papel",
+  "/admin/ban-user": "desativou usuário",
+  "/admin/unban-user": "reativou usuário",
+  "/admin/remove-user": "removeu usuário",
+};
+/** e-mail do alvo capturado ANTES da ação (necessário para remove-user, que apaga o registro). */
+const pendingTarget = new Map<string, string>();
+
+async function emailOf(userId: unknown) {
+  if (typeof userId !== "string") return null;
+  const { rows } = await getPool().query(`select "email" from "user" where "id" = $1`, [userId]);
+  return (rows[0]?.email as string | undefined) ?? null;
+}
+
+const auditBefore = createAuthMiddleware(async (ctx) => {
+  if (!AUDITED[ctx.path]) return;
+  const body = (ctx.body ?? {}) as { userId?: string };
+  const email = await emailOf(body.userId);
+  if (body.userId && email) pendingTarget.set(body.userId, email);
+});
+
+const auditAfter = createAuthMiddleware(async (ctx) => {
+  const action = AUDITED[ctx.path];
+  if (!action) return;
+  const returned = ctx.context.returned as unknown;
+  if (!returned || returned instanceof Error) return; // só ações que deram certo
+  const actor = ctx.context.session?.user as { id?: string; email?: string } | undefined;
+  const body = (ctx.body ?? {}) as { userId?: string; email?: string; role?: string; banReason?: string };
+  const target = body.email ?? (body.userId ? pendingTarget.get(body.userId) ?? (await emailOf(body.userId)) : null);
+  if (body.userId) pendingTarget.delete(body.userId);
+  const details = body.role ? { role: body.role } : body.banReason ? { motivo: body.banReason } : {};
+  try {
+    await getPool().query(
+      `insert into "audit_log"("actorId","actorEmail","action","targetEmail","details") values ($1,$2,$3,$4,$5)`,
+      [actor?.id ?? null, actor?.email ?? "desconhecido", action, target, JSON.stringify(details)]);
+  } catch (error) { console.error("audit_log", error); }
+});
 
 /** R10–R12: acesso de 6 h; a sessão em si vive 1 h a mais (janela para "Restaurar sessão"). */
 export const ACCESS_TTL_MS = 6 * 60 * 60 * 1000;
@@ -58,6 +100,7 @@ function createAuth() {
         },
       },
     },
+    hooks: { before: auditBefore, after: auditAfter },
     advanced: { useSecureCookies: baseURL.startsWith("https://") },
     plugins: [admin({ defaultRole: "user", adminRoles: ["admin"] })],
   });

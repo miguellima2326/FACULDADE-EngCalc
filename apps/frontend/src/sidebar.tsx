@@ -1,7 +1,7 @@
 import React from "react";
 import { signOut, type SessionUser } from "./account.js";
 
-type View = "calc" | "history" | "admin";
+type View = "calc" | "history" | "admin" | "projects";
 
 /** Switch de tema: trilho com sol/lua e botão deslizante (role="switch"). */
 export function ThemeSwitch({ theme, onChange }: { theme: "light" | "dark"; onChange: (t: "light" | "dark") => void }) {
@@ -38,11 +38,12 @@ export function Sidebar({ user, isAdmin, view, theme, onTheme, onGo, onClose }: 
         <div className="sb-group">
           <div className="sb-label">Trabalho</div>
           <Item to="calc" icon="∑" label="Cálculos" />
+          <Item to="projects" icon="▦" label="Projetos" />
           <Item to="history" icon="◷" label="Histórico" />
         </div>
         {isAdmin && <div className="sb-group">
           <div className="sb-label">Administração</div>
-          <Item to="admin" icon="⚙" label="Usuários e acessos" />
+          <Item to="admin" icon="⚙" label="Usuários, uso e atividades" />
         </div>}
         <div className="sb-group">
           <div className="sb-label">Preferências</div>
