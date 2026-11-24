@@ -16,6 +16,10 @@ import { getPool } from "./db.js";
  */
 let instance: ReturnType<typeof createAuth> | null = null;
 
+/** Admin master (R14): e-mails de ADMIN_EMAILS — nenhum outro admin pode rebaixar, desativar ou remover. */
+export const masterEmails = () =>
+  new Set((process.env.ADMIN_EMAILS || "").split(",").map((e) => e.trim().toLowerCase()).filter(Boolean));
+
 /* ── Spec 011 — registro de atividades administrativas ── */
 const AUDITED: Record<string, string> = {
   "/admin/create-user": "cadastrou usuário",
@@ -55,8 +59,10 @@ const auditBefore = createAuthMiddleware(async (ctx) => {
   // Regra: admin não pode ser desativado nem removido (rebaixe para usuário antes);
   // e o sistema nunca fica sem admin (não rebaixa o último).
   if (body.userId && (ctx.path === "/admin/ban-user" || ctx.path === "/admin/remove-user" || ctx.path === "/admin/set-role")) {
-    const { rows } = await getPool().query(`select "role" from "user" where "id" = $1`, [body.userId]);
+    const { rows } = await getPool().query(`select "role", "email" from "user" where "id" = $1`, [body.userId]);
     const isAdmin = rows[0]?.role === "admin";
+    if (rows[0] && masterEmails().has(String(rows[0].email).toLowerCase()) && !(ctx.path === "/admin/set-role" && body.role === "admin"))
+      throw new APIError("FORBIDDEN", { message: "Este é um admin master (definido no servidor) e não pode ser rebaixado, desativado ou removido." });
     if (isAdmin && ctx.path !== "/admin/set-role")
       throw new APIError("FORBIDDEN", { message: "Não é possível desativar ou remover um administrador. Rebaixe-o para usuário antes." });
     if (isAdmin && ctx.path === "/admin/set-role" && body.role !== "admin") {
