@@ -16,7 +16,7 @@ export function useSession() {
 }
 
 export const signInWithGoogle = () =>
-  authClient.signIn.social({ provider: "google", callbackURL: "/", errorCallbackURL: "/" });
+  authClient.signIn.social({ provider: "google", callbackURL: window.location.pathname + window.location.search, errorCallbackURL: "/" });
 
 const HAD_SESSION = "engcalc_had_session";
 export const signOut = () => { localStorage.removeItem(HAD_SESSION); return authClient.signOut().then(() => window.location.assign("/")); };

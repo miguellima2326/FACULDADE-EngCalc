@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { randomBytes } from "node:crypto";
 import { calculate, DATA, CABLE_CATALOG } from "@engcalc/core";
 import { getPool } from "./db.js";
 import { getAuth, ACCESS_TTL_MS, RESTORE_WINDOW_MS } from "./auth.js";
@@ -148,6 +149,149 @@ route("GET", /^\/api\/admin\/linked$/, async (ctx) => {
   const s = await requireUser(ctx, "admin"); if (!s) return;
   const { rows } = await getPool().query(`select distinct "userId" from "account" where "providerId" = 'google'`);
   json(ctx.response, 200, rows.map((r) => r.userId));
+});
+
+/* ── Spec 011 — painel de uso e registro de atividades ── */
+route("GET", /^\/api\/admin\/stats$/, async (ctx) => {
+  const s = await requireUser(ctx, "admin"); if (!s) return;
+  const pool = getPool();
+  const [tot, perUser, top, perDay] = await Promise.all([
+    pool.query(`select count(*) filter (where "createdAt" > now() - interval '7 days')::int as d7,
+                       count(*) filter (where "createdAt" > now() - interval '30 days')::int as d30,
+                       count(*)::int as total,
+                       count(distinct "userId") filter (where "createdAt" > now() - interval '30 days')::int as ativos30
+                  from "calc_history"`),
+    pool.query(`select u."name", u."email", count(h."id")::int as n, max(h."createdAt") as ultimo
+                  from "user" u left join "calc_history" h on h."userId" = u."id" and h."createdAt" > now() - interval '30 days'
+                 group by u."id" order by n desc, u."name" limit 50`),
+    pool.query(`select "areaKey", "calcId", max("calcName") as "calcName", count(*)::int as n
+                  from "calc_history" where "createdAt" > now() - interval '30 days'
+                 group by "areaKey", "calcId" order by n desc limit 10`),
+    pool.query(`select to_char(d, 'YYYY-MM-DD') as dia, coalesce(c.n, 0)::int as n
+                  from generate_series(current_date - 13, current_date, interval '1 day') d
+                  left join (select date("createdAt") as dia, count(*) as n from "calc_history"
+                              where "createdAt" > current_date - 14 group by 1) c on c.dia = d::date
+                 order by d`),
+  ]);
+  json(ctx.response, 200, { totals: tot.rows[0], perUser: perUser.rows, top: top.rows, perDay: perDay.rows });
+});
+
+route("GET", /^\/api\/admin\/audit$/, async (ctx) => {
+  const s = await requireUser(ctx, "admin"); if (!s) return;
+  const { rows } = await getPool().query(
+    `select "id","actorEmail","action","targetEmail","details","createdAt" from "audit_log" order by "createdAt" desc limit 200`);
+  json(ctx.response, 200, rows);
+});
+
+/* ── Spec 007 — projetos (obras) ── */
+type ProjIn = { name?: string; client?: string; description?: string };
+const clean = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+const PROJ_COLS = `p."id", p."name", p."client", p."description", p."shareToken", p."createdAt", p."updatedAt"`;
+
+async function ownProject(ctx: Ctx, s: Session, id: string) {
+  const { rows } = await getPool().query(`select ${PROJ_COLS}, p."userId" from "project" p where p."id" = $1`, [id]);
+  const p = rows[0];
+  if (!p) { json(ctx.response, 404, { error: "Projeto não encontrado" }); return null; }
+  if (p.userId !== s.user.id) { json(ctx.response, 403, { error: "Somente o dono pode alterar este projeto" }); return null; }
+  return p;
+}
+async function projectWithItems(where: string, param: string) {
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `select ${PROJ_COLS}, p."userId", u."name" as "ownerName" from "project" p join "user" u on u."id" = p."userId" where ${where}`, [param]);
+  const p = rows[0];
+  if (!p) return null;
+  const items = await pool.query(
+    `select "id","areaKey","calcId","calcName","vals","inputs","report","createdAt" from "project_item" where "projectId" = $1 order by "createdAt"`, [p.id]);
+  return { ...p, items: items.rows };
+}
+
+route("GET", /^\/api\/projects$/, async (ctx) => {
+  const s = await requireUser(ctx); if (!s) return;
+  const { rows } = await getPool().query(
+    `select ${PROJ_COLS}, (select count(*)::int from "project_item" i where i."projectId" = p."id") as "itemCount"
+       from "project" p where p."userId" = $1 order by p."updatedAt" desc`, [s.user.id]);
+  json(ctx.response, 200, rows);
+});
+
+route("POST", /^\/api\/projects$/, async (ctx) => {
+  const s = await requireUser(ctx); if (!s) return;
+  const b = (await ctx.body()) as ProjIn;
+  const name = clean(b.name, 120);
+  if (!name) return json(ctx.response, 400, { error: "Informe o nome do projeto" });
+  const { rows } = await getPool().query(
+    `insert into "project"("userId","name","client","description") values ($1,$2,$3,$4) returning "id"`,
+    [s.user.id, name, clean(b.client, 120), clean(b.description, 1000)]);
+  json(ctx.response, 201, { id: rows[0].id });
+});
+
+route("GET", /^\/api\/projects\/(\d+)$/, async (ctx) => {
+  const s = await requireUser(ctx); if (!s) return;
+  const p = await projectWithItems(`p."id" = $1`, ctx.params[0]!);
+  if (!p) return json(ctx.response, 404, { error: "Projeto não encontrado" });
+  if (p.userId !== s.user.id) return json(ctx.response, 403, { error: "Projeto de outro usuário — use o link compartilhado" });
+  json(ctx.response, 200, { ...p, readOnly: false });
+});
+
+route("PUT", /^\/api\/projects\/(\d+)$/, async (ctx) => {
+  const s = await requireUser(ctx); if (!s) return;
+  if (!(await ownProject(ctx, s, ctx.params[0]!))) return;
+  const b = (await ctx.body()) as ProjIn;
+  const name = clean(b.name, 120);
+  if (!name) return json(ctx.response, 400, { error: "Informe o nome do projeto" });
+  await getPool().query(`update "project" set "name"=$1,"client"=$2,"description"=$3,"updatedAt"=now() where "id"=$4`,
+    [name, clean(b.client, 120), clean(b.description, 1000), ctx.params[0]]);
+  json(ctx.response, 200, { ok: true });
+});
+
+route("DELETE", /^\/api\/projects\/(\d+)$/, async (ctx) => {
+  const s = await requireUser(ctx); if (!s) return;
+  if (!(await ownProject(ctx, s, ctx.params[0]!))) return;
+  await getPool().query(`delete from "project" where "id" = $1`, [ctx.params[0]]);
+  json(ctx.response, 204, {});
+});
+
+route("POST", /^\/api\/projects\/(\d+)\/items$/, async (ctx) => {
+  const s = await requireUser(ctx); if (!s) return;
+  if (!(await ownProject(ctx, s, ctx.params[0]!))) return;
+  const b = (await ctx.body()) as { areaKey?: string; calcId?: string; calcName?: string; vals?: unknown; inputs?: unknown; report?: string };
+  if (!b.areaKey || !b.calcId || !b.calcName) return json(ctx.response, 400, { error: "Item inválido" });
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `insert into "project_item"("projectId","areaKey","calcId","calcName","vals","inputs","report") values ($1,$2,$3,$4,$5,$6,$7) returning "id"`,
+    [ctx.params[0], clean(b.areaKey, 40), clean(b.calcId, 60), clean(b.calcName, 200), JSON.stringify(b.vals ?? {}), JSON.stringify(Array.isArray(b.inputs) ? b.inputs.slice(0, 60) : []), clean(b.report, 20000)]);
+  await pool.query(`update "project" set "updatedAt" = now() where "id" = $1`, [ctx.params[0]]);
+  json(ctx.response, 201, { id: rows[0].id });
+});
+
+route("DELETE", /^\/api\/projects\/(\d+)\/items\/(\d+)$/, async (ctx) => {
+  const s = await requireUser(ctx); if (!s) return;
+  if (!(await ownProject(ctx, s, ctx.params[0]!))) return;
+  await getPool().query(`delete from "project_item" where "id" = $1 and "projectId" = $2`, [ctx.params[1], ctx.params[0]]);
+  json(ctx.response, 204, {});
+});
+
+route("POST", /^\/api\/projects\/(\d+)\/share$/, async (ctx) => {
+  const s = await requireUser(ctx); if (!s) return;
+  if (!(await ownProject(ctx, s, ctx.params[0]!))) return;
+  const token = randomBytes(18).toString("base64url");
+  await getPool().query(`update "project" set "shareToken" = $1 where "id" = $2`, [token, ctx.params[0]]);
+  json(ctx.response, 200, { shareToken: token });
+});
+
+route("DELETE", /^\/api\/projects\/(\d+)\/share$/, async (ctx) => {
+  const s = await requireUser(ctx); if (!s) return;
+  if (!(await ownProject(ctx, s, ctx.params[0]!))) return;
+  await getPool().query(`update "project" set "shareToken" = null where "id" = $1`, [ctx.params[0]]);
+  json(ctx.response, 204, {});
+});
+
+route("GET", /^\/api\/shared\/([A-Za-z0-9_-]{16,64})$/, async (ctx) => {
+  const s = await requireUser(ctx); if (!s) return; // J5: só usuários logados
+  const p = await projectWithItems(`p."shareToken" = $1`, ctx.params[0]!);
+  if (!p) return json(ctx.response, 404, { error: "Link inválido ou revogado" });
+  const { shareToken: _t, userId, ...rest } = p;
+  json(ctx.response, 200, { ...rest, readOnly: userId !== s.user.id });
 });
 
 route("GET", /^\/api\/catalog$/, async (ctx) => {
