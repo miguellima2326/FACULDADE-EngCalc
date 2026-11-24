@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { calculate, DATA, CABLE_CATALOG } from "@engcalc/core";
 import { getPool } from "./db.js";
-import { getAuth } from "./auth.js";
+import { getAuth, ACCESS_TTL_MS, RESTORE_WINDOW_MS } from "./auth.js";
 import { toNodeHandler, fromNodeHeaders } from "better-auth/node";
 
 /**
@@ -67,12 +67,48 @@ async function sessionOf(request: IncomingMessage) {
   return getAuth().api.getSession({ headers: fromNodeHeaders(request.headers) });
 }
 type Session = NonNullable<Awaited<ReturnType<typeof sessionOf>>>;
+/** Prazo do acesso (R10). Sessões antigas sem o campo: createdAt + 6 h. */
+function accessExpiry(session: Session) {
+  const s = session.session as { accessExpiresAt?: string | Date | null; createdAt: string | Date };
+  return new Date(s.accessExpiresAt ?? new Date(new Date(s.createdAt).getTime() + ACCESS_TTL_MS)).getTime();
+}
 async function requireUser(ctx: Ctx, role?: "admin"): Promise<Session | null> {
   const session = await sessionOf(ctx.request);
-  if (!session) { json(ctx.response, 401, { error: "Faça login para continuar" }); return null; }
+  if (!session) { json(ctx.response, 401, { error: "Faça login para continuar", code: "UNAUTHENTICATED" }); return null; }
+  const exp = accessExpiry(session);
+  if (Date.now() > exp) {
+    json(ctx.response, 401, { error: "Login expirado — faça login novamente", code: "SESSION_EXPIRED", restoreUntil: new Date(exp + RESTORE_WINDOW_MS).toISOString() });
+    return null;
+  }
   if (role && (session.user as { role?: string }).role !== role) { json(ctx.response, 403, { error: "Acesso restrito a administradores" }); return null; }
   return session;
 }
+
+/* ── Expiração e restauração da sessão (R10–R12) ── */
+route("GET", /^\/api\/session\/status$/, async ({ request, response }) => {
+  const session = await sessionOf(request);
+  if (!session) return json(response, 200, { state: "none" });
+  const exp = accessExpiry(session);
+  const restoreUntil = exp + RESTORE_WINDOW_MS;
+  const now = Date.now();
+  json(response, 200, {
+    state: now <= exp ? "active" : now <= restoreUntil ? "expired" : "none",
+    accessExpiresAt: new Date(exp).toISOString(),
+    restoreUntil: new Date(restoreUntil).toISOString(),
+    serverNow: new Date(now).toISOString(),
+  });
+});
+
+route("POST", /^\/api\/session\/restore$/, async ({ request, response }) => {
+  const session = await sessionOf(request);
+  if (!session) return json(response, 401, { error: "Sessão encerrada — entre com o Google novamente", code: "UNAUTHENTICATED" });
+  const exp = accessExpiry(session);
+  const now = Date.now();
+  if (now > exp + RESTORE_WINDOW_MS) return json(response, 410, { error: "A janela de 1 hora para restaurar terminou — entre com o Google novamente", code: "RESTORE_WINDOW_CLOSED" });
+  const accessExpiresAt = new Date(now + ACCESS_TTL_MS), expiresAt = new Date(now + ACCESS_TTL_MS + RESTORE_WINDOW_MS);
+  await getPool().query(`update "session" set "accessExpiresAt" = $1, "expiresAt" = $2, "updatedAt" = now() where "id" = $3`, [accessExpiresAt, expiresAt, session.session.id]);
+  json(response, 200, { state: "active", accessExpiresAt: accessExpiresAt.toISOString(), restoreUntil: expiresAt.toISOString() });
+});
 
 /* ── Histórico na nuvem (história 6) ── */
 const HIST_LIMIT = 50;

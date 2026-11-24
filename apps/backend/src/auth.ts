@@ -15,6 +15,11 @@ import { getPool } from "./db.js";
  */
 let instance: ReturnType<typeof createAuth> | null = null;
 
+/** R10–R12: acesso de 6 h; a sessão em si vive 1 h a mais (janela para "Restaurar sessão"). */
+export const ACCESS_TTL_MS = 6 * 60 * 60 * 1000;
+export const RESTORE_WINDOW_MS = 60 * 60 * 1000;
+export const SESSION_TTL_S = (ACCESS_TTL_MS + RESTORE_WINDOW_MS) / 1000;
+
 function createAuth() {
   const baseURL = process.env.BETTER_AUTH_URL;
   if (!baseURL) throw new Error("BETTER_AUTH_URL não configurada");
@@ -38,7 +43,21 @@ function createAuth() {
       // o Google precisa informar email_verified = true (sem trustedProviders, que pularia essa checagem) — R2.
       accountLinking: { enabled: true, requireLocalEmailVerified: false, allowDifferentEmails: false },
     },
-    session: { expiresIn: 60 * 60 * 24 * 7, updateAge: 60 * 60 * 24 },
+    session: {
+      expiresIn: SESSION_TTL_S,
+      disableSessionRefresh: true, // sem renovação automática: só "Restaurar sessão" renova
+      additionalFields: { accessExpiresAt: { type: "date", required: false, input: false } },
+    },
+    databaseHooks: {
+      session: {
+        create: {
+          before: async (session) => {
+            const now = Date.now();
+            return { data: { ...session, accessExpiresAt: new Date(now + ACCESS_TTL_MS), expiresAt: new Date(now + ACCESS_TTL_MS + RESTORE_WINDOW_MS) } };
+          },
+        },
+      },
+    },
     advanced: { useSecureCookies: baseURL.startsWith("https://") },
     plugins: [admin({ defaultRole: "user", adminRoles: ["admin"] })],
   });

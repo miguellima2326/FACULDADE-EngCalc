@@ -18,7 +18,69 @@ export function useSession() {
 export const signInWithGoogle = () =>
   authClient.signIn.social({ provider: "google", callbackURL: "/", errorCallbackURL: "/" });
 
-export const signOut = () => authClient.signOut().then(() => window.location.assign("/"));
+const HAD_SESSION = "engcalc_had_session";
+export const signOut = () => { localStorage.removeItem(HAD_SESSION); return authClient.signOut().then(() => window.location.assign("/")); };
+
+/* ═══════════ Expiração do acesso (spec 002 · R10–R13) ═══════════ */
+export type AccessState = "loading" | "active" | "expired" | "none";
+export type Access = { state: AccessState; accessExpiresAt?: number; restoreUntil?: number; restore: () => Promise<string | null> };
+export const SESSION_EXPIRED_EVENT = "engcalc:session-expired";
+
+/** Avisa o app quando a API responde 401 SESSION_EXPIRED (chamar após qualquer fetch da API). */
+export function notifyIfExpired(body: { code?: string } | null | undefined) {
+  if (body?.code === "SESSION_EXPIRED") window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+}
+
+export function useAccess(userId: string | undefined): Access {
+  const [st, setSt] = React.useState<{ state: AccessState; accessExpiresAt?: number; restoreUntil?: number; skew: number }>({ state: "loading", skew: 0 });
+
+  const load = React.useCallback(async () => {
+    try {
+      const r = await fetch("/api/session/status", { credentials: "include" });
+      const b = await r.json();
+      const skew = b.serverNow ? Date.parse(b.serverNow) - Date.now() : 0; // relógio do servidor × do navegador
+      setSt({ state: b.state, accessExpiresAt: b.accessExpiresAt ? Date.parse(b.accessExpiresAt) : undefined, restoreUntil: b.restoreUntil ? Date.parse(b.restoreUntil) : undefined, skew });
+    } catch { setSt((c) => ({ ...c, state: "active" })); }
+  }, []);
+
+  React.useEffect(() => {
+    if (!userId) { setSt({ state: "none", skew: 0 }); return; }
+    localStorage.setItem(HAD_SESSION, "1");
+    setSt((c) => ({ ...c, state: "loading" }));
+    load();
+  }, [userId, load]);
+
+  // Vira para "expirado" no instante em que o acesso vence (sem precisar recarregar)
+  React.useEffect(() => {
+    if (st.state !== "active" || !st.accessExpiresAt) return;
+    const ms = st.accessExpiresAt - (Date.now() + st.skew);
+    const id = window.setTimeout(load, Math.max(ms + 500, 0));
+    return () => window.clearTimeout(id);
+  }, [st.state, st.accessExpiresAt, st.skew, load]);
+
+  React.useEffect(() => {
+    const on = () => load();
+    window.addEventListener(SESSION_EXPIRED_EVENT, on);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, on);
+  }, [load]);
+
+  const restore = React.useCallback(async () => {
+    const r = await fetch("/api/session/restore", { method: "POST", credentials: "include" });
+    const b = await r.json().catch(() => ({}));
+    if (!r.ok) return b.error || "Não foi possível restaurar a sessão";
+    await load();
+    return null;
+  }, [load]);
+
+  return { state: st.state, accessExpiresAt: st.accessExpiresAt, restoreUntil: st.restoreUntil ? st.restoreUntil - st.skew : undefined, restore };
+}
+
+/** Havia sessão neste navegador e ela acabou (sem "Sair" explícito)? */
+export function consumeHadSession() {
+  const had = localStorage.getItem(HAD_SESSION) === "1";
+  localStorage.removeItem(HAD_SESSION);
+  return had;
+}
 
 /** Mensagens para os erros que o Better Auth devolve em ?error= após o callback do Google. */
 const AUTH_ERRORS: Record<string, string> = {

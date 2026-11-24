@@ -137,3 +137,79 @@ export function fatorInstalacao(v: FatorInput): FatorResult {
   const Ktotal = Kt * Ks * Kp * Kg;
   return { Kt, Ks, Kp, Kg, Ktotal, Fc: 1 / Ktotal, avisos, refs, espacamentoUsado };
 }
+
+/* ═══════════════════ Capacidade de condução — Iz (spec 008, L1) ═══════════════════
+ * NBR 5410 Tab. 36 (PVC, 70 °C) e Tab. 37 (EPR/XLPE, 90 °C), condutores de COBRE,
+ * equivalentes à IEC 60364-5-52 B.52.2 a B.52.5. Ar ambiente 30 °C (A1–C); solo 20 °C e
+ * 2,5 K·m/W para o método D (cabo em eletroduto enterrado).
+ * [CONFIRMAR NA NORMA] — valores transcritos de memória da IEC 60364-5-52/NBR 5410.
+ * Colunas: A1, A2, B1, B2, C, D.
+ */
+export type Metodo = "A1" | "A2" | "B1" | "B2" | "C" | "D";
+export const METODOS: Metodo[] = ["A1", "A2", "B1", "B2", "C", "D"];
+export const SECOES_IZ = [1.5, 2.5, 4, 6, 10, 16, 25, 35, 50, 70, 95, 120, 150, 185, 240, 300] as const;
+
+type IzRow = readonly [number, number, number, number, number, number];
+const IZ_CU: Record<Isolacao, Record<2 | 3, readonly IzRow[]>> = {
+  pvc: {
+    2: [
+      [14.5, 14, 17.5, 16.5, 19.5, 22], [19.5, 18.5, 24, 23, 27, 29], [26, 25, 32, 30, 36, 38], [34, 32, 41, 38, 46, 47],
+      [46, 43, 57, 52, 63, 63], [61, 57, 76, 69, 85, 81], [80, 75, 101, 90, 112, 104], [99, 92, 125, 111, 138, 125],
+      [119, 110, 151, 133, 168, 148], [151, 139, 192, 168, 213, 183], [182, 167, 232, 201, 258, 216], [210, 192, 269, 232, 299, 246],
+      [240, 219, 309, 265, 344, 278], [273, 248, 353, 300, 392, 312], [321, 291, 415, 351, 461, 361], [367, 334, 477, 401, 530, 408],
+    ],
+    3: [
+      [13.5, 13, 15.5, 15, 17.5, 18], [18, 17.5, 21, 20, 24, 24], [24, 23, 28, 27, 32, 31], [31, 29, 36, 34, 41, 39],
+      [42, 39, 50, 46, 57, 52], [56, 52, 68, 62, 76, 67], [73, 68, 89, 80, 96, 86], [89, 83, 110, 99, 119, 103],
+      [108, 99, 134, 118, 144, 122], [136, 125, 171, 149, 184, 151], [164, 150, 207, 179, 223, 179], [188, 172, 239, 206, 259, 203],
+      [216, 196, 275, 225, 299, 230], [245, 223, 314, 255, 341, 258], [286, 261, 370, 297, 403, 297], [328, 298, 426, 339, 464, 336],
+    ],
+  },
+  xlpe: {
+    2: [
+      [19, 18.5, 23, 22, 24, 26], [26, 25, 31, 30, 33, 34], [35, 33, 42, 40, 45, 44], [45, 42, 54, 51, 58, 56],
+      [61, 57, 75, 69, 80, 73], [81, 76, 100, 91, 107, 95], [106, 99, 133, 119, 138, 121], [131, 121, 164, 146, 171, 146],
+      [158, 145, 198, 175, 209, 173], [200, 183, 253, 221, 269, 213], [241, 220, 306, 265, 328, 252], [278, 253, 354, 305, 382, 287],
+      [318, 290, 407, 349, 441, 324], [362, 329, 464, 395, 506, 363], [424, 386, 546, 462, 599, 419], [486, 442, 628, 529, 693, 474],
+    ],
+    3: [
+      [17, 16.5, 20, 19.5, 22, 22], [23, 22, 28, 26, 30, 29], [31, 30, 37, 35, 40, 37], [40, 38, 48, 44, 52, 46],
+      [54, 51, 66, 60, 71, 61], [73, 68, 88, 80, 96, 79], [95, 89, 117, 105, 119, 101], [117, 109, 144, 128, 147, 122],
+      [141, 130, 175, 154, 179, 144], [179, 164, 222, 194, 229, 178], [216, 197, 269, 233, 278, 211], [249, 227, 312, 268, 322, 240],
+      [285, 259, 342, 300, 371, 271], [324, 295, 384, 340, 424, 304], [380, 346, 450, 398, 500, 351], [435, 396, 514, 455, 576, 396],
+    ],
+  },
+};
+
+/** Alumínio: aproximado como 0,78 × Iz do cobre (relação típica da NBR 5410 Tab. 36/37) — [CONFIRMAR NA NORMA]. */
+export const FATOR_AL_APROX = 0.78;
+export type Material = "cu" | "al";
+export const SECAO_MIN_AL = 16;
+
+/** Iz tabelado (A) para material/isolação/nº de condutores carregados/método/seção. */
+export function izTabela(material: Material, isolacao: Isolacao, carregados: 2 | 3, metodo: Metodo, secao: number): number | null {
+  const i = SECOES_IZ.indexOf(secao as (typeof SECOES_IZ)[number]);
+  const j = METODOS.indexOf(metodo);
+  if (i < 0 || j < 0) return null;
+  if (material === "al" && secao < SECAO_MIN_AL) return null;
+  const base = IZ_CU[isolacao][carregados][i]![j]!;
+  return material === "al" ? Math.round(base * FATOR_AL_APROX * 10) / 10 : base;
+}
+
+/* ── Resistência do condutor (IEC 60228, classe 2, CC a 20 °C, Ω/km) ── */
+const R20_CU: Record<number, number> = { 1.5: 12.1, 2.5: 7.41, 4: 4.61, 6: 3.08, 10: 1.83, 16: 1.15, 25: 0.727, 35: 0.524, 50: 0.387, 70: 0.268, 95: 0.193, 120: 0.153, 150: 0.124, 185: 0.0991, 240: 0.0754, 300: 0.0601 };
+const R20_AL: Record<number, number> = { 16: 1.91, 25: 1.20, 35: 0.868, 50: 0.641, 70: 0.443, 95: 0.320, 120: 0.253, 150: 0.206, 185: 0.164, 240: 0.125, 300: 0.100 };
+const ALPHA: Record<Material, number> = { cu: 0.00393, al: 0.00403 };
+export const TEMP_OPERACAO: Record<Isolacao, number> = { pvc: 70, xlpe: 90 };
+/** Reatância indutiva típica de cabos BT (unipolares encostados em trifólio / multipolares): ≈ 0,08 Ω/km. Aproximação. */
+export const X_CABO_OHM_KM = 0.08;
+
+/** R (Ω/km) na temperatura θ: R20·[1 + α·(θ − 20)]. Efeito pelicular desprezado (seções ≤ 300 mm²). */
+export function resistenciaCondutor(material: Material, secao: number, theta = 20): number | null {
+  const r20 = (material === "cu" ? R20_CU : R20_AL)[secao];
+  if (r20 === undefined) return null;
+  return r20 * (1 + ALPHA[material] * (theta - 20));
+}
+
+/** k da fórmula adiabática (NBR 5410 Tab. 30, condutores ≤ 300 mm²). */
+export const K_ADIABATICO: Record<Material, Record<Isolacao, number>> = { cu: { pvc: 115, xlpe: 143 }, al: { pvc: 76, xlpe: 94 } };

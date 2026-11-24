@@ -36,3 +36,14 @@ Princípios que toda spec, plano e implementação devem respeitar.
 ## 6. Aviso legal
 - Resultados são para fins educacionais; o rodapé e o relatório lembram que o projeto
   final exige responsável técnico habilitado.
+
+## 7. Contrato de um cálculo (convenções, a partir da spec 005)
+Além de `id`, `name`, `desc`, `formula`, `context`, `norma`, `fields`, `calc`:
+- **`example`** — `Record<campo, valor>` com entradas válidas e realistas (preferir os casos dos testes).
+  O botão "carregar exemplo" usa isso.
+- **`fields[].units`** (opcional) — unidades alternativas aceitas no campo:
+  `[{ value: "kN", factor: 1 }, { value: "tf", factor: 9.80665 }]`. O **primeiro** item é a unidade-base
+  (igual ao `hint`); o front converte `valor × factor` antes de enviar. O motor só recebe a unidade-base.
+- **`links`** (opcional, no retorno de `calc`) — encadeamento para outro cálculo com valores pré-preenchidos:
+  `links: [{ label: "Dimensionar seção do apoio B", area: "civil", calcId: "concreto", values: { ... } }]`.
+- Fórmulas: o campo `formula` separa equações com ` | `; o front mostra uma por linha, na ordem.

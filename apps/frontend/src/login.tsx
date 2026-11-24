@@ -1,5 +1,5 @@
 import React from "react";
-import { signInWithGoogle } from "./account.js";
+import { signInWithGoogle, signOut, type Access } from "./account.js";
 
 /** Fórmulas que se alternam na prancha — uma de cada disciplina. */
 const FORMULAS = [
@@ -101,7 +101,7 @@ export function LoginScreen({ error, onDismissError, loading }: { error: string 
 
         <section className="login-panel">
           <div className="login-brand">
-            <svg width="34" height="34" viewBox="0 0 28 28" aria-hidden="true"><polygon points="14,2 25,8 25,20 14,26 3,20 3,8" stroke="#1f5fbf" strokeWidth="1.5" fill="none" /><path d="M10 9v10h8M10 14h6" stroke="currentColor" strokeWidth="1.8" fill="none" /></svg>
+            <svg width="34" height="34" viewBox="0 0 28 28" aria-hidden="true"><polygon points="14,2 25,8 25,20 14,26 3,20 3,8" stroke="#1f5fbf" strokeWidth="1.5" fill="none" /><path d="M18 9h-8v10h8M10 14h6" stroke="currentColor" strokeWidth="1.8" fill="none" /></svg>
             <div><div className="tb-name login-name">Eng<b>Calc</b></div><div className="tb-tagline">memória de cálculo técnica</div></div>
           </div>
           <p className="login-lead">Fórmulas verificadas, verificação de norma e relatórios para engenharia mecânica, civil e elétrica.</p>
@@ -122,4 +122,48 @@ export function LoginScreen({ error, onDismissError, loading }: { error: string 
       </div>
     </div>
   );
+}
+
+/** R13 — tela neutra enquanto a sessão é verificada (evita "piscar" o login ao recarregar). */
+export function Splash() {
+  return <div className="login splash" aria-busy="true" aria-label="Carregando">
+    <div className="splash-mark">
+      <svg width="44" height="44" viewBox="0 0 28 28" aria-hidden="true"><polygon points="14,2 25,8 25,20 14,26 3,20 3,8" stroke="#1f5fbf" strokeWidth="1.5" fill="none" /><path d="M18 9h-8v10h8M10 14h6" stroke="currentColor" strokeWidth="1.8" fill="none" /></svg>
+      <div className="splash-bar"><span /></div>
+    </div>
+  </div>;
+}
+
+const hhmm = (t: number) => new Date(t).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+
+/** R11/R12 — "Login expirado": encerrar ou restaurar (até 1 h após expirar). */
+export function ExpiredScreen({ access, userName }: { access: Access; userName: string }) {
+  const [now, setNow] = React.useState(Date.now());
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState<string | null>(null);
+  React.useEffect(() => { const id = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(id); }, []);
+  const left = Math.max((access.restoreUntil ?? 0) - now, 0);
+  const canRestore = left > 0;
+  const mm = Math.floor(left / 60000), ss = Math.floor((left % 60000) / 1000);
+  const restore = async () => { setBusy(true); setErr(await access.restore()); setBusy(false); };
+  return <div className="login">
+    <div className="login-sheet expired-sheet">
+      <section className="login-panel">
+        <div className="expired-code">SESSÃO · 401</div>
+        <h1 className="expired-title">Login expirado</h1>
+        <p className="login-lead">{userName ? `${userName.split(" ")[0]}, seu` : "Seu"} acesso de 6 horas terminou{access.accessExpiresAt ? ` às ${hhmm(access.accessExpiresAt)}` : ""}. Faça login novamente{canRestore ? " ou restaure a sessão" : ""}.</p>
+        {canRestore
+          ? <div className="expired-window"><span>Restaurar disponível até {hhmm(access.restoreUntil!)}</span><b>{String(mm).padStart(2, "0")}:{String(ss).padStart(2, "0")}</b></div>
+          : <div className="auth-banner" role="status"><span>⚠ A janela de 1 hora para restaurar terminou. Entre com o Google novamente.</span></div>}
+        {err && <div className="auth-banner" role="alert"><span>⚠ {err}</span></div>}
+        <div className="expired-actions">
+          {canRestore
+            ? <button className="btn-calc" disabled={busy} onClick={restore}>{busy ? "Restaurando…" : "↻ Restaurar sessão"}</button>
+            : <button className="btn-google login-google" onClick={() => signInWithGoogle()}>Entrar com Google</button>}
+          <button className="btn-secondary" onClick={() => signOut()}>Encerrar sessão</button>
+        </div>
+        <p className="login-note">Por segurança, o acesso vale 6 horas. Restaurar renova por mais 6 horas sem passar pelo Google; depois de 1 hora expirado, é preciso entrar de novo.</p>
+      </section>
+    </div>
+  </div>;
 }
