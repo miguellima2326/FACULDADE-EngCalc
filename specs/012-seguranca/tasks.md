@@ -10,5 +10,5 @@
 - [x] S8 TLS `verify-full` com o Neon (app e migrações)
 - [x] Extra (pedido): admin não pode ser desativado nem removido; não rebaixa o último admin — validado no servidor (hook) e escondido no front
 - [x] Extra (pedido): usuário desativado perde todas as sessões (plugin admin) + checagem em toda requisição (derruba sessão restante) + front volta ao login com aviso
-- [ ] S9 (manual) papel de banco com privilégio mínimo para a aplicação
+- [x] S9 papel `engcalc_app` (read_write via `neon roles create --access read_write`): DML permitido, CREATE/DROP/ALTER/TRUNCATE negados (testado); app usa ele em `DATABASE_URL`, migrações seguem com o dono em `DATABASE_URL_UNPOOLED` — falta atualizar na Vercel
 - [ ] S10 (manual) trocar `GOOGLE_CLIENT_SECRET`
