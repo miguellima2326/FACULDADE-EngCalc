@@ -9,7 +9,7 @@ export type CalcLink = { label: string; area: string; calcId: string; values: Re
 export type Preset = { values: Record<string, string>; origin?: string; units?: Record<string, number> };
 export type SavedRun = {
   areaKey: string; calcId: string; calcName: string; inputSummary: string; resultStr: string;
-  vals: Record<string, string>; report: string;
+  vals: Record<string, string>; report: string; inputs: Array<{ label: string; value: string; unit: string }>;
 };
 
 const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -90,6 +90,7 @@ export function Worksheet({ calc, areaKey, preset, responsible, onSaved, onOpenL
         inputSummary: calc.fields.filter(visible).map((f: any) => `${f.hint || f.id}=${parsed[f.id] ?? "—"}`).join(", "),
         resultStr: (body.result.multi ? firstLine : `${body.result.value} ${body.result.unit || ""}`).slice(0, 40),
         vals: values,
+        inputs: inputRows,
         report: body.result.multi ? value : `${calc.result}: ${body.result.value} ${body.result.unit || ""}`,
       };
       setLastRun(run);
