@@ -13,7 +13,8 @@ automaticamente ao cadastro feito pelo admin (mesmo e-mail). Fase 1: só Google.
 3. **Logins seguintes:** "Entrar com Google" → mesmo usuário (mesmo id).
 4. **Sem cadastro:** e-mail Google não cadastrado → **bloqueia** com a mensagem "Você não possui cadastro. Solicite acesso a um administrador." Nada é criado no banco.
 5. **Admin gerencia:** lista usuários, vê se já vincularam o Google, desativa (bane) ou remove usuário, promove a admin.
-6. **Histórico na conta:** o histórico de cálculos passa a ser salvo por usuário (importa o do `localStorage` no primeiro login).
+6. **Tela de login primeiro:** quem não está logado vê apenas a tela de login (com o aviso de acesso por convite).
+7. **Histórico na conta:** o histórico de cálculos passa a ser salvo por usuário (importa o do `localStorage` no primeiro login).
 
 ## Regras
 | ID | Regra |
@@ -24,7 +25,7 @@ automaticamente ao cadastro feito pelo admin (mesmo e-mail). Fase 1: só Google.
 | R4 | Primeiro admin vem da variável `ADMIN_EMAILS` (seed), já que ninguém pode se cadastrar sozinho. |
 | R5 | Sem senha na fase 1 (nada de hash de senha para gerenciar). |
 | R6 | Sessão em cookie `HttpOnly`, `Secure`, `SameSite=Lax`, mesmo domínio do front. |
-| R7 | Os cálculos continuam funcionando **sem login**; login libera histórico na nuvem e área admin. |
+| R7 | **Todo o sistema exige login** (revisado em 2026-11-23): sem sessão, o front mostra só a tela de login e a API recusa cálculos/catálogo com 401. Apenas `/api/health*` e `/api/auth/*` são públicas. |
 | R8 | Usuário desativado (banido) não consegue entrar mesmo com Google válido. |
 | R9 | Rotas `/api/admin/*` exigem papel `admin` (verificado no servidor, nunca só no front). |
 
@@ -33,7 +34,9 @@ automaticamente ao cadastro feito pelo admin (mesmo e-mail). Fase 1: só Google.
 - [ ] Segundo login de fulano → mesmo `user.id`.
 - [ ] `ciclano@gmail.com` (não cadastrado) → mensagem "não possui cadastro"; tabela `user` inalterada.
 - [ ] Usuário banido → login recusado.
-- [ ] Usuário comum chamando `/api/admin/users` → 403.
+- [ ] Usuário comum chamando `/api/admin/linked` ou `/api/auth/admin/*` → 403.
+- [ ] Sem login: front mostra só a tela de login; `POST /api/calculations/...` → 401.
+- [ ] Topo da página logado: só o ícone do usuário (abre o menu).
 
 ## Proposta técnica
 - **Better Auth** (biblioteca de auth em TypeScript, roda no backend Node): provedor Google com

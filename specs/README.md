@@ -23,9 +23,9 @@ Regras do fluxo:
 
 | Nº  | Spec                                                     | Status            |
 |-----|----------------------------------------------------------|-------------------|
-| 001 | [Correção dos cálculos existentes](001-correcao-calculos/spec.md) | ✅ aprovada · ✔ implementada (falta revisão no navegador) |
+| 001 | [Correção dos cálculos existentes](001-correcao-calculos/spec.md) | ✅ em produção (2026-11-23) |
 | 002 | [Acesso por convite (admin) + login Google](002-login-social/spec.md) | ✅ aprovada |
-| 003 | [Nova hospedagem: back + banco](003-hospedagem/spec.md)  | ✅ aprovada · ✔ Neon conectado · falta env na Vercel + deploy |
+| 003 | [Nova hospedagem: back + banco](003-hospedagem/spec.md)  | ✅ em produção (2026-11-23) · falta remover render.yaml |
 | —   | [Backlog de funcionalidades](backlog.md)                 | ideias → viram specs 004+ |
 
 Ordem sugerida: **003 → 001 → 002** (sem hospedagem nada vai ao ar; a 002 precisa do banco da 003).
