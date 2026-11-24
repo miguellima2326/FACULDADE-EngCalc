@@ -29,6 +29,8 @@ export const SESSION_EXPIRED_EVENT = "engcalc:session-expired";
 /** Avisa o app quando a API responde 401 SESSION_EXPIRED (chamar após qualquer fetch da API). */
 export function notifyIfExpired(body: { code?: string } | null | undefined) {
   if (body?.code === "SESSION_EXPIRED") window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+  // desativado no meio do uso: volta para a tela de login com o aviso
+  if (body?.code === "BANNED") window.location.assign("/?error=banned");
 }
 
 export function useAccess(userId: string | undefined): Access {
@@ -38,6 +40,7 @@ export function useAccess(userId: string | undefined): Access {
     try {
       const r = await fetch("/api/session/status", { credentials: "include" });
       const b = await r.json();
+      if (b.reason === "banned") { window.location.assign("/?error=banned"); return; }
       const skew = b.serverNow ? Date.parse(b.serverNow) - Date.now() : 0; // relógio do servidor × do navegador
       setSt({ state: b.state, accessExpiresAt: b.accessExpiresAt ? Date.parse(b.accessExpiresAt) : undefined, restoreUntil: b.restoreUntil ? Date.parse(b.restoreUntil) : undefined, skew });
     } catch { setSt((c) => ({ ...c, state: "active" })); }
@@ -65,7 +68,7 @@ export function useAccess(userId: string | undefined): Access {
   }, [load]);
 
   const restore = React.useCallback(async () => {
-    const r = await fetch("/api/session/restore", { method: "POST", credentials: "include" });
+    const r = await fetch("/api/session/restore", { method: "POST", credentials: "include", headers: { "content-type": "application/json" } });
     const b = await r.json().catch(() => ({}));
     if (!r.ok) return b.error || "Não foi possível restaurar a sessão";
     await load();
@@ -162,10 +165,14 @@ export function AdminPanel({ me }: { me: SessionUser }) {
         </span>
         {!self && <span className="admin-actions">
           <button disabled={busy} onClick={() => act(() => authClient.admin.setRole({ userId: u.id, role: u.role === "admin" ? "user" : "admin" }), "Papel atualizado")}>{u.role === "admin" ? "tornar usuário" : "tornar admin"}</button>
-          {u.banned
-            ? <button disabled={busy} onClick={() => act(() => authClient.admin.unbanUser({ userId: u.id }), "Acesso reativado")}>reativar</button>
-            : <button disabled={busy} onClick={() => act(() => authClient.admin.banUser({ userId: u.id, banReason: "Desativado pelo administrador" }), "Acesso desativado")}>desativar</button>}
-          <button disabled={busy} className="danger" onClick={() => { if (confirm(`Remover ${u.email}? O histórico dele também será apagado.`)) act(() => authClient.admin.removeUser({ userId: u.id }), "Usuário removido"); }}>remover</button>
+          {u.role === "admin"
+            ? <span className="admin-hint" title="Admins não podem ser desativados nem removidos — rebaixe para usuário antes">🔒 protegido</span>
+            : <>
+              {u.banned
+                ? <button disabled={busy} onClick={() => act(() => authClient.admin.unbanUser({ userId: u.id }), "Acesso reativado")}>reativar</button>
+                : <button disabled={busy} onClick={() => act(() => authClient.admin.banUser({ userId: u.id, banReason: "Desativado pelo administrador" }), "Acesso desativado")}>desativar</button>}
+              <button disabled={busy} className="danger" onClick={() => { if (confirm(`Remover ${u.email}? O histórico dele também será apagado.`)) act(() => authClient.admin.removeUser({ userId: u.id }), "Usuário removido"); }}>remover</button>
+            </>}
         </span>}
       </div>;
     })}

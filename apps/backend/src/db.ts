@@ -12,7 +12,8 @@ export function getPool(): pg.Pool {
   if (pool) return pool;
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) throw new Error("DATABASE_URL não configurada");
-  pool = new pg.Pool({ connectionString, max: 5, idleTimeoutMillis: 5000 });
+  // S8: valida o certificado do servidor (verify-full) em vez de apenas exigir TLS
+  pool = new pg.Pool({ connectionString: connectionString.replace(/sslmode=(require|prefer|verify-ca)/, "sslmode=verify-full"), max: 5, idleTimeoutMillis: 5000 });
   if (process.env.VERCEL) attachDatabasePool(pool);
   return pool;
 }

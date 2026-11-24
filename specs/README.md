@@ -34,6 +34,7 @@ Regras do fluxo:
 | 009 | [Civil: IDF, laje, flecha, ancoragem, materiais](009-civil-novos/spec.md) | ✔ implementada |
 | 010 | [Mecânica: eixo, parafusos, engrenagens](010-mecanica-novos/spec.md) | ✔ implementada |
 | 011 | [Administração: uso e auditoria](011-admin-uso/spec.md) | ✔ implementada |
+| 012 | [Endurecimento de segurança](012-seguranca/spec.md) | ✔ implementada · S9/S10 manuais |
 | —   | [Backlog de funcionalidades](backlog.md)                 | ideias restantes |
 
 Ordem sugerida: **003 → 001 → 002** (sem hospedagem nada vai ao ar; a 002 precisa do banco da 003).

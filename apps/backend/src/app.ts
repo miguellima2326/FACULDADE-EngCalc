@@ -17,7 +17,8 @@ export type Ctx = { request: IncomingMessage; response: ServerResponse; url: URL
 const ALLOWED_ORIGIN = process.env.CORS_ORIGIN || "";
 
 export const json = (response: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) => {
-  const base: Record<string, string> = { "content-type": "application/json; charset=utf-8", ...headers };
+  // S2: respostas da API nunca ficam em cache (dados autenticados)
+  const base: Record<string, string> = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", ...headers };
   if (ALLOWED_ORIGIN) {
     base["access-control-allow-origin"] = ALLOWED_ORIGIN;
     base["access-control-allow-credentials"] = "true";
@@ -29,13 +30,35 @@ export const json = (response: ServerResponse, status: number, body: unknown, he
 };
 
 /** Lê o corpo JSON — compatível com a Vercel (que pode já ter lido o stream em req.body). */
+export const MAX_BODY_BYTES = 256 * 1024; // S4
+export class HttpError extends Error { constructor(public status: number, message: string) { super(message); } }
+
 export async function readJson(request: IncomingMessage): Promise<unknown> {
+  const declared = Number(request.headers["content-length"] || 0);
+  if (declared > MAX_BODY_BYTES) throw new HttpError(413, "Requisição muito grande");
   const pre = (request as IncomingMessage & { body?: unknown }).body;
-  if (pre !== undefined && pre !== null) return typeof pre === "string" ? JSON.parse(pre || "{}") : pre;
   let raw = "";
-  for await (const chunk of request) raw += chunk;
-  return raw ? JSON.parse(raw) : {};
+  if (pre !== undefined && pre !== null) raw = typeof pre === "string" ? pre : JSON.stringify(pre);
+  else {
+    let size = 0;
+    for await (const chunk of request) {
+      size += (chunk as Buffer).length;
+      if (size > MAX_BODY_BYTES) throw new HttpError(413, "Requisição muito grande");
+      raw += chunk;
+    }
+  }
+  if (Buffer.byteLength(raw) > MAX_BODY_BYTES) throw new HttpError(413, "Requisição muito grande");
+  try { return raw ? JSON.parse(raw) : {}; } catch { throw new HttpError(400, "JSON inválido"); }
 }
+
+/** S3 — defesa CSRF: escritas só aceitas vindas do próprio site (Origin, ou Referer como fallback). */
+function sameOrigin(request: IncomingMessage) {
+  const host = (request.headers["x-forwarded-host"] as string | undefined)?.split(",")[0]?.trim() || request.headers.host;
+  const src = (request.headers.origin as string | undefined) || (request.headers.referer as string | undefined);
+  if (!src || !host) return false;
+  try { return new URL(src).host === host; } catch { return false; }
+}
+const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 /** Na Vercel, a rewrite manda /api/(.*) para /api?__path=$1 — reconstrói o caminho original. */
 export function resolveUrl(request: IncomingMessage): URL {
@@ -68,6 +91,14 @@ async function sessionOf(request: IncomingMessage) {
   return getAuth().api.getSession({ headers: fromNodeHeaders(request.headers) });
 }
 type Session = NonNullable<Awaited<ReturnType<typeof sessionOf>>>;
+/** Defesa em profundidade: usuário desativado perde todas as sessões na primeira requisição. */
+async function isBanned(session: Session) {
+  const u = session.user as { id: string; banned?: boolean | null; banExpires?: string | Date | null };
+  const active = u.banned && (!u.banExpires || new Date(u.banExpires).getTime() > Date.now());
+  if (active) await getPool().query(`delete from "session" where "userId" = $1`, [u.id]);
+  return !!active;
+}
+
 /** Prazo do acesso (R10). Sessões antigas sem o campo: createdAt + 6 h. */
 function accessExpiry(session: Session) {
   const s = session.session as { accessExpiresAt?: string | Date | null; createdAt: string | Date };
@@ -76,6 +107,7 @@ function accessExpiry(session: Session) {
 async function requireUser(ctx: Ctx, role?: "admin"): Promise<Session | null> {
   const session = await sessionOf(ctx.request);
   if (!session) { json(ctx.response, 401, { error: "Faça login para continuar", code: "UNAUTHENTICATED" }); return null; }
+  if (await isBanned(session)) { json(ctx.response, 403, { error: "Seu acesso foi desativado por um administrador", code: "BANNED" }); return null; }
   const exp = accessExpiry(session);
   if (Date.now() > exp) {
     json(ctx.response, 401, { error: "Login expirado — faça login novamente", code: "SESSION_EXPIRED", restoreUntil: new Date(exp + RESTORE_WINDOW_MS).toISOString() });
@@ -89,6 +121,7 @@ async function requireUser(ctx: Ctx, role?: "admin"): Promise<Session | null> {
 route("GET", /^\/api\/session\/status$/, async ({ request, response }) => {
   const session = await sessionOf(request);
   if (!session) return json(response, 200, { state: "none" });
+  if (await isBanned(session)) return json(response, 200, { state: "none", reason: "banned" });
   const exp = accessExpiry(session);
   const restoreUntil = exp + RESTORE_WINDOW_MS;
   const now = Date.now();
@@ -103,6 +136,7 @@ route("GET", /^\/api\/session\/status$/, async ({ request, response }) => {
 route("POST", /^\/api\/session\/restore$/, async ({ request, response }) => {
   const session = await sessionOf(request);
   if (!session) return json(response, 401, { error: "Sessão encerrada — entre com o Google novamente", code: "UNAUTHENTICATED" });
+  if (await isBanned(session)) return json(response, 403, { error: "Seu acesso foi desativado por um administrador", code: "BANNED" });
   const exp = accessExpiry(session);
   const now = Date.now();
   if (now > exp + RESTORE_WINDOW_MS) return json(response, 410, { error: "A janela de 1 hora para restaurar terminou — entre com o Google novamente", code: "RESTORE_WINDOW_CLOSED" });
@@ -135,6 +169,8 @@ route("POST", /^\/api\/history$/, async (ctx) => {
       `insert into "calc_history"("userId","areaKey","calcId","calcName","inputSummary","resultStr","vals") values ($1,$2,$3,$4,$5,$6,$7)`,
       [s.user.id, e.areaKey, e.calcId, e.calcName.slice(0, 200), (e.inputSummary || "").slice(0, 500), (e.resultStr || "").slice(0, 200), JSON.stringify(e.vals || {})]);
   }
+  // S6: mantém só os 500 registros mais recentes por usuário
+  await pool.query(`delete from "calc_history" where "userId" = $1 and "id" not in (select "id" from "calc_history" where "userId" = $1 order by "createdAt" desc limit 500)`, [s.user.id]);
   json(ctx.response, 201, { saved: entries.length });
 });
 
@@ -219,6 +255,8 @@ route("POST", /^\/api\/projects$/, async (ctx) => {
   const b = (await ctx.body()) as ProjIn;
   const name = clean(b.name, 120);
   if (!name) return json(ctx.response, 400, { error: "Informe o nome do projeto" });
+  const count = await getPool().query(`select count(*)::int as n from "project" where "userId" = $1`, [s.user.id]);
+  if (count.rows[0].n >= 100) return json(ctx.response, 409, { error: "Limite de 100 projetos atingido — exclua projetos antigos" }); // S6
   const { rows } = await getPool().query(
     `insert into "project"("userId","name","client","description") values ($1,$2,$3,$4) returning "id"`,
     [s.user.id, name, clean(b.client, 120), clean(b.description, 1000)]);
@@ -257,6 +295,8 @@ route("POST", /^\/api\/projects\/(\d+)\/items$/, async (ctx) => {
   const b = (await ctx.body()) as { areaKey?: string; calcId?: string; calcName?: string; vals?: unknown; inputs?: unknown; report?: string };
   if (!b.areaKey || !b.calcId || !b.calcName) return json(ctx.response, 400, { error: "Item inválido" });
   const pool = getPool();
+  const items = await pool.query(`select count(*)::int as n from "project_item" where "projectId" = $1`, [ctx.params[0]]);
+  if (items.rows[0].n >= 300) return json(ctx.response, 409, { error: "Limite de 300 cálculos por projeto atingido" }); // S6
   const { rows } = await pool.query(
     `insert into "project_item"("projectId","areaKey","calcId","calcName","vals","inputs","report") values ($1,$2,$3,$4,$5,$6,$7) returning "id"`,
     [ctx.params[0], clean(b.areaKey, 40), clean(b.calcId, 60), clean(b.calcName, 200), JSON.stringify(b.vals ?? {}), JSON.stringify(Array.isArray(b.inputs) ? b.inputs.slice(0, 60) : []), clean(b.report, 20000)]);
@@ -332,6 +372,13 @@ export const handle: Handler = async (request, response) => {
     try { return await toNodeHandler(getAuth())(request, response); }
     catch (error) { console.error(error); if (!response.headersSent) return json(response, 500, { error: "Erro de autenticação" }); return; }
   }
+  if (WRITE_METHODS.has(request.method || "")) {
+    if (!sameOrigin(request)) return json(response, 403, { error: "Origem não permitida" });
+    if (Number(request.headers["content-length"] || 0) > MAX_BODY_BYTES) return json(response, 413, { error: "Requisição muito grande" });
+    const hasBody = Number(request.headers["content-length"] || 0) > 0 || !!request.headers["transfer-encoding"];
+    const ctype = String(request.headers["content-type"] || "");
+    if (hasBody && !ctype.startsWith("application/json")) return json(response, 415, { error: "Use Content-Type: application/json" });
+  }
   for (const r of routes) {
     if (r.method !== request.method) continue;
     const m = url.pathname.match(r.pattern);
@@ -339,6 +386,7 @@ export const handle: Handler = async (request, response) => {
     try {
       await r.run({ request, response, url, params: m.slice(1), body: () => readJson(request) });
     } catch (error) {
+      if (error instanceof HttpError) { if (!response.headersSent) json(response, error.status, { error: error.message }); return; }
       console.error(error);
       if (!response.headersSent) json(response, 500, { error: "Erro interno" });
     }
