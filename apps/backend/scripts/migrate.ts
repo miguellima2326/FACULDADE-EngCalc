@@ -15,7 +15,7 @@ for (const name of [".env.local", ".env"]) if (existsSync(root + name)) process.
 
 const url = process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL;
 if (!url) throw new Error("DATABASE_URL_UNPOOLED não configurada");
-const client = new pg.Client({ connectionString: url });
+const client = new pg.Client({ connectionString: url.replace(/sslmode=(require|prefer|verify-ca)/, "sslmode=verify-full") });
 
 async function migrate() {
   await client.query(`create table if not exists "_migrations" ("name" text primary key, "appliedAt" timestamptz not null default now())`);
