@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
 import { calculate, DATA, CABLE_CATALOG } from "@engcalc/core";
 import { getPool } from "./db.js";
-import { getAuth, ACCESS_TTL_MS, RESTORE_WINDOW_MS } from "./auth.js";
+import { getAuth, ACCESS_TTL_MS, RESTORE_WINDOW_MS, masterEmails } from "./auth.js";
 import { toNodeHandler, fromNodeHeaders } from "better-auth/node";
 
 /**
@@ -185,6 +185,11 @@ route("GET", /^\/api\/admin\/linked$/, async (ctx) => {
   const s = await requireUser(ctx, "admin"); if (!s) return;
   const { rows } = await getPool().query(`select distinct "userId" from "account" where "providerId" = 'google'`);
   json(ctx.response, 200, rows.map((r) => r.userId));
+});
+
+route("GET", /^\/api\/admin\/masters$/, async (ctx) => {
+  const s = await requireUser(ctx, "admin"); if (!s) return;
+  json(ctx.response, 200, [...masterEmails()]);
 });
 
 /* ── Spec 011 — painel de uso e registro de atividades ── */

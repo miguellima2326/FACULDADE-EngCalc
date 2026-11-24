@@ -952,3 +952,4 @@ body.sidebar-locked { overflow: hidden; }
 .audit-when { font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); }
 .audit-what b { color: var(--ink); font-weight: 600; }
 .admin-hint { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); padding: 5px 4px; align-self: center; }
+.admin-tag.is-master { border-color: var(--readout); color: var(--readout); background: var(--readout-bg); }
