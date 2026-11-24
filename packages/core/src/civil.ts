@@ -13,6 +13,13 @@ import {
 } from "./lib/hidraulica.js";
 
 const fx = (x, d = 2) => Number(x).toFixed(d);
+
+/* Unidades alternativas por campo (constituição §7) — o 1º item é a unidade-base */
+const U_KN   = [{ value: "kN", factor: 1 }, { value: "tf", factor: 9.80665 }, { value: "kgf", factor: 0.00980665 }];
+const U_KN_M = [{ value: "kN/m", factor: 1 }, { value: "tf/m", factor: 9.80665 }, { value: "kgf/m", factor: 0.00980665 }];
+const U_KNM  = [{ value: "kN·m", factor: 1 }, { value: "tf·m", factor: 9.80665 }];
+const U_KPA  = [{ value: "kPa", factor: 1 }, { value: "kgf/cm²", factor: 98.0665 }, { value: "MPa", factor: 1000 }];
+const U_KN_M2 = [{ value: "kN/m²", factor: 1 }, { value: "kgf/m²", factor: 0.00980665 }, { value: "tf/m²", factor: 9.80665 }];
 const pos = (v, nome) => { if (!(v > 0)) throw new Error(`${nome} deve ser > 0`); };
 
 /* ───────────── helpers exportados (testes) ───────────── */
@@ -71,9 +78,11 @@ const vigaCA = {
     { id: "cob", label: "cobrimento nominal",     ph: "3.0", hint: "cm"   },
     { id: "fck", label: "fck do concreto",        ph: "25",  hint: "MPa"  },
     { id: "fyk", label: "fyk do aço (CA-50=500)", ph: "500", hint: "MPa"  },
-    { id: "gk",  label: "carga perm. gk (total)", ph: "20",  hint: "kN/m" },
-    { id: "qk",  label: "carga variável qk",      ph: "15",  hint: "kN/m" },
+    { id: "gk",  label: "carga perm. gk (total)", ph: "20",  hint: "kN/m", units: U_KN_M },
+    { id: "qk",  label: "carga variável qk",      ph: "15",  hint: "kN/m", units: U_KN_M },
+    { id: "Mdinf", label: "Md informado (opcional — substitui fd·L²/8)", ph: "", hint: "kN·m", optional: true, units: U_KNM },
   ],
+  example: { L: 6, bw: 25, h: 60, cob: 3, fck: 25, fyk: 500, gk: 20, qk: 15 },
   calc(v) {
     pos(v.L, "Vão L"); pos(v.bw, "bw"); pos(v.h, "h"); pos(v.cob, "Cobrimento");
     if (v.gk < 0 || v.qk < 0) throw new Error("Cargas não podem ser negativas");
@@ -84,7 +93,8 @@ const vigaCA = {
     if (d <= 0) throw new Error("Cobrimento incompatível com a altura");
 
     const fd = 1.4 * v.gk + 1.4 * v.qk;               // kN/m
-    const Md = (fd * v.L * v.L) / 8;                   // kN·m
+    const MdInf = v.Mdinf > 0;                         // spec 006 E1: momento vindo de outro cálculo
+    const Md = MdInf ? v.Mdinf : (fd * v.L * v.L) / 8; // kN·m
     const bwmm = v.bw * 10, dmm = d * 10;
     const Kmd = (Md * 1e6) / (bwmm * dmm * dmm * fcd);
     if (Kmd > KMD_LIM) throw new Error(`Kmd = ${fx(Kmd, 3)} > ${fx(KMD_LIM, 3)} (x/d > 0,45) — seção insuficiente: aumente h ou bw (ou use armadura dupla)`);
@@ -121,7 +131,7 @@ const vigaCA = {
       val: [
         `── ESFORÇOS ──────────────────────────`,
         `fd = 1,4·${v.gk} + 1,4·${v.qk} = ${fx(fd)} kN/m`,
-        `Md = fd·L²/8 = ${fx(Md)} kN·m`,
+        MdInf ? `Md = Md,inf (informado) = ${fx(Md)} kN·m   (fd·L²/8 = ${fx((fd * v.L * v.L) / 8)} kN·m ignorado)` : `Md = fd·L²/8 = ${fx(Md)} kN·m`,
         `Vsd (apoio) = fd·L/2 = ${fx(Vsd)} kN`,
         `── MATERIAIS ─────────────────────────`,
         `fcd = fck/${GAMMA_C} = ${fx(fcd)} MPa   fyd = fyk/${GAMMA_S} = ${fx(fyd)} MPa`,
@@ -144,9 +154,13 @@ const vigaCA = {
         estribos.length
           ? `Estribos (2 ramos): ${estribos.map((e) => `φ${e.phi} c/ ${e.s} cm`).join(" | ")}`
           : `⚠ estribos muito densos — aumente a seção`,
-        `⚠ ELS (flecha e fissuração) não verificados neste módulo`,
+        `⚠ ELS (flecha e fissuração) não verificados aqui → use "Flecha de viga CA"`,
       ].join("\n"),
       unit: "", multi: true,
+      links: MdInf ? [] : [{
+        label: "Verificar flecha desta viga (ELS)", area: "civil", calcId: "flecha_ca",
+        values: { L: v.L, bw: v.bw, h: v.h, cob: v.cob, fck: v.fck, As: Number(fx(AsAdot)), gk: v.gk, qk: v.qk },
+      }],
     };
   },
   result: "dimensionamento CA",
@@ -165,16 +179,17 @@ const sapata = {
   context:
     "Sapata isolada rígida sob pilar retangular, com cargas de SERVIÇO (Nk, Mk) para o solo e de CÁLCULO (×1,4) para o concreto e o aço. Dimensões em planta por balanços iguais (A − B = a − b), com peso próprio estimado em 5% de Nk; a sapata é ampliada até que não haja tração no solo (e ≤ A/6) e σmáx ≤ σadm. A altura mínima para comportamento rígido é h ≥ (A − a)/3 (NBR 6118 §22.6.1) — se h não for informado, o sistema calcula. Armadura de flexão pelo método das bielas/CEB-70 na seção de referência S1 (0,15·a para dentro do pilar). Em sapata rígida não há punção por tração diagonal; verifica-se a biela comprimida no contorno do pilar C (§22.6.2.2 / §19.5.3.1).",
   fields: [
-    { id: "Nk",    label: "carga normal de serviço Nk",       ph: "800", hint: "kN"   },
-    { id: "Mk",    label: "momento de serviço Mk (dir. A)",   ph: "0",   hint: "kN·m" },
+    { id: "Nk",    label: "carga normal de serviço Nk",       ph: "800", hint: "kN",   units: U_KN },
+    { id: "Mk",    label: "momento de serviço Mk (dir. A)",   ph: "0",   hint: "kN·m", units: U_KNM },
     { id: "ap",    label: "dimensão do pilar a (dir. A)",     ph: "40",  hint: "cm"   },
     { id: "bp",    label: "dimensão do pilar b",              ph: "40",  hint: "cm"   },
-    { id: "sigAd", label: "tensão admissível do solo σadm",   ph: "200", hint: "kPa"  },
+    { id: "sigAd", label: "tensão admissível do solo σadm",   ph: "200", hint: "kPa",  units: U_KPA },
     { id: "fck",   label: "fck do concreto",                  ph: "25",  hint: "MPa"  },
     { id: "fyk",   label: "fyk do aço",                       ph: "500", hint: "MPa"  },
     { id: "cobs",  label: "cobrimento nominal",               ph: "5",   hint: "cm"   },
     { id: "hs",    label: "altura h (opcional — calcula se vazio)", ph: "", hint: "cm", optional: true },
   ],
+  example: { Nk: 800, Mk: 0, ap: 40, bp: 40, sigAd: 200, fck: 25, fyk: 500, cobs: 5 },
   calc(v) {
     pos(v.Nk, "Nk"); pos(v.sigAd, "σadm"); pos(v.ap, "a"); pos(v.bp, "b"); pos(v.cobs, "Cobrimento");
     if (v.Mk < 0) throw new Error("Informe Mk em módulo (≥ 0)");
@@ -269,8 +284,8 @@ const pilar = {
   context:
     "Pilar retangular de concreto armado sob compressão com momento de 1ª ordem numa direção (h). Verifica as DUAS direções: em cada uma calcula esbeltez λ, momento mínimo (§11.3.3.4.3) e, quando λ > λ1, o efeito de 2ª ordem pelo método do pilar-padrão com curvatura aproximada (§15.8.3.3.2, válido para λ ≤ 90). A armadura é obtida por equilíbrio da seção (domínios de deformação, bloco 0,8x · 0,85fcd, armadura simétrica em duas faces) para a direção mais crítica. Simplificações: αb = 1 (a favor da segurança), flexão oblíqua não combinada, coeficiente γn aplicado se a menor dimensão < 19 cm (Tab. 13.1).",
   fields: [
-    { id: "Nd",   label: "força normal de cálculo Nd",    ph: "1500", hint: "kN"   },
-    { id: "M1d",  label: "momento de 1ª ordem M1d (dir. h)", ph: "60", hint: "kN·m" },
+    { id: "Nd",   label: "força normal de cálculo Nd",    ph: "1500", hint: "kN",   units: U_KN },
+    { id: "M1d",  label: "momento de 1ª ordem M1d (dir. h)", ph: "60", hint: "kN·m", units: U_KNM },
     { id: "lc",   label: "comprimento do pilar lc",       ph: "3.0",  hint: "m"    },
     { id: "beta", label: "coef. de vínculo β (biarticulado=1)", ph: "1", hint: "—"  },
     { id: "bP",   label: "dimensão b da seção",           ph: "25",   hint: "cm"   },
@@ -279,6 +294,7 @@ const pilar = {
     { id: "fyk",  label: "fyk",                           ph: "500",  hint: "MPa"  },
     { id: "dl",   label: "d' — centro da barra à face (opcional, padrão 4)", ph: "4", hint: "cm", optional: true },
   ],
+  example: { Nd: 1500, M1d: 60, lc: 3, beta: 1, bP: 25, hP: 50, fck: 30, fyk: 500 },
   calc(v) {
     pos(v.Nd, "Nd"); pos(v.lc, "lc"); pos(v.bP, "b"); pos(v.hP, "h");
     if (!(v.beta > 0 && v.beta <= 2)) throw new Error("β deve estar entre 0 e 2");
@@ -349,6 +365,10 @@ const pilar = {
         `⚠ flexão oblíqua não combinada; αb = 1 adotado`,
       ].join("\n"),
       unit: "", multi: true,
+      links: [{
+        label: "Dimensionar a sapata deste pilar", area: "civil", calcId: "fundacao",
+        values: { Nk: Number(fx(v.Nd / 1.4, 1)), Mk: 0, ap: v.hP, bp: v.bP, sigAd: 200, fck: 25, fyk: 500, cobs: 5 },
+      }],
     };
   },
   result: "pilar CA",
@@ -367,11 +387,12 @@ const vigaContinua = {
     "Viga contínua de dois vãos com carga uniforme em cada vão, apoios externos articulados e rigidez EI constante. O momento no apoio central M_B vem da equação dos três momentos (Clapeyron): M_A·L₁ + 2M_B(L₁+L₂) + M_C·L₂ = −q₁L₁³/4 − q₂L₂³/4. As reações saem do equilíbrio de cada vão, o momento positivo máximo ocorre onde o cortante zera (M⁺ = R²/2q, medido a partir do apoio externo) e a flecha máxima é obtida pela superposição exata (carga uniforme + momento M_B) varrendo o vão. Para concreto armado use EI efetivo (fissurado) e lembre que a flecha final inclui a fluência; limites da Tab. 13.3: L/250 (visual) e L/500 (paredes).",
   fields: [
     { id: "L1", label: "vão 1 — comprimento L₁",    ph: "7.0",   hint: "m"     },
-    { id: "q1", label: "vão 1 — carga distrib. q₁", ph: "25",    hint: "kN/m"  },
+    { id: "q1", label: "vão 1 — carga distrib. q₁", ph: "25",    hint: "kN/m", units: U_KN_M },
     { id: "L2", label: "vão 2 — comprimento L₂",    ph: "5.5",   hint: "m"     },
-    { id: "q2", label: "vão 2 — carga distrib. q₂", ph: "18",    hint: "kN/m"  },
+    { id: "q2", label: "vão 2 — carga distrib. q₂", ph: "18",    hint: "kN/m", units: U_KN_M },
     { id: "EI", label: "rigidez E·I (constante)",   ph: "45000", hint: "kN·m²" },
   ],
+  example: { L1: 6, q1: 10, L2: 6, q2: 10, EI: 45000 },
   calc(v) {
     pos(v.L1, "L₁"); pos(v.L2, "L₂"); pos(v.q1, "q₁"); pos(v.q2, "q₂"); pos(v.EI, "EI");
     const r = vigaContinua2Vaos(v.L1, v.q1, v.L2, v.q2, v.EI);
@@ -399,6 +420,15 @@ const vigaContinua = {
         `→ cargas de serviço? multiplique por 1,4 para obter os esforços de cálculo`,
       ].join("\n"),
       unit: "", multi: true,
+      links: (() => {
+        const v1 = v.L1 >= v.L2, Lmax = v1 ? v.L1 : v.L2, qmax = v1 ? v.q1 : v.q2;
+        const base = { L: Lmax, gk: qmax, qk: 0, bw: 20, h: 50, cob: 3, fck: 25, fyk: 500 };
+        return [
+          { label: "Dimensionar apoio B (momento negativo)", area: "civil", calcId: "concreto", values: { ...base, Mdinf: Number(fx(1.4 * Math.abs(r.MB))) } },
+          { label: "Dimensionar vão (momento positivo máx.)", area: "civil", calcId: "concreto", values: { ...base, Mdinf: Number(fx(1.4 * Math.max(r.M1, r.M2))) } },
+          { label: "Sapata do apoio central", area: "civil", calcId: "fundacao", values: { Nk: Number(fx(r.RB)), Mk: 0, ap: 20, bp: 40, sigAd: 200, fck: 25, fyk: 500, cobs: 5 } },
+        ];
+      })(),
     };
   },
   result: "viga contínua",
@@ -435,6 +465,7 @@ const drenagemPredial = {
     { id: "sC",    label: "declividade da calha",                 ph: "0.5",  hint: "%"    },
     { id: "sH",    label: "declividade do condutor horizontal",   ph: "1",    hint: "%"    },
   ],
+  example: { I: 150, a: 5, hT: 1.5, b: 12, nCond: 1, mat: "0.011", wC: 15, sC: 0.5, sH: 1 },
   calc(v) {
     pos(v.I, "I"); pos(v.a, "a"); pos(v.b, "b"); pos(v.wC, "Largura da calha");
     if (v.hT < 0) throw new Error("h não pode ser negativo");
@@ -502,6 +533,7 @@ const redeUrbana = {
     { id: "nMn", label: "coef. de Manning n (concreto=0,013)", ph: "0.013", hint: "—" },
     { id: "Dc",  label: "DN a verificar (opcional)",      ph: "600",   hint: "mm", optional: true },
   ],
+  example: { A: 2.5, C: 0.85, i: 120, L: 300, S: 0.02, nMn: 0.013, Dc: 600 },
   calc(v) {
     pos(v.A, "Área"); pos(v.i, "i"); pos(v.L, "L"); pos(v.nMn, "n");
     if (!(v.C > 0 && v.C <= 1)) throw new Error("C deve estar entre 0 e 1");
@@ -537,13 +569,438 @@ const redeUrbana = {
         `V = ${fx(r.V)} m/s ${r.V >= 0.6 && r.V <= 5 ? "✓" : "⚠ fora de 0,6–5,0 m/s"}`,
       );
     }
-    return { val: lines.join("\n"), unit: "", multi: true };
+    return {
+      val: lines.join("\n"), unit: "", multi: true,
+      links: [{ label: `Intensidade de chuva para t = tc (${fx(Math.max(tc, 5), 1)} min)`, area: "civil", calcId: "idf", values: { T: 10, t: Number(fx(Math.max(tc, 5), 1)) } }],
+    };
   },
   result: "rede urbana",
+};
+
+/* ═══════════════════════ SPEC 009 — NOVOS CÁLCULOS ═══════════════════════ */
+
+/* C1 — Intensidade de chuva (IDF): i = K·T^a / (t + b)^c  (mm/h, t em min)
+ * Presets de equações publicadas — [CONFIRMAR] parâmetros na fonte original antes de projeto real. */
+export const IDF_PRESETS = {
+  sp:  { label: "São Paulo/SP — Wilken (1972) [CONFIRMAR]",            K: 1747.9, a: 0.181, b: 15, c: 0.89  },
+  cwb: { label: "Curitiba/PR — Parigot de Souza (1959) [CONFIRMAR]",   K: 5950,   a: 0.217, b: 26, c: 1.15  },
+  bsb: { label: "Brasília/DF — Novacap [CONFIRMAR]",                    K: 1574.7, a: 0.207, b: 11, c: 0.884 },
+};
+export const idfIntensidade = (K, a, b, c, T, t) => (K * Math.pow(T, a)) / Math.pow(t + b, c);
+const dependeCustom = { id: "cidade", in: ["personalizado"] };
+
+const idf = {
+  id: "idf",
+  icon: "chart",
+  name: "Intensidade de Chuva — Curva IDF",
+  desc: "i(T, t) pela equação intensidade-duração-frequência da cidade",
+  norma: "Equações IDF locais",
+  formula: "i = K·T^a / (t + b)^c  (mm/h) | h = i·t/60  (mm) | t = duração da chuva = tc da bacia",
+  context:
+    "A equação IDF (intensidade–duração–frequência) dá a intensidade média de chuva i para um período de retorno T e uma duração t. Em drenagem, usa-se t igual ao tempo de concentração tc da bacia (calculado na rede urbana) e T conforme a obra (microdrenagem 2–10 anos; macrodrenagem 25–100 anos; NBR 10844 predial: 1, 5 ou 25 anos). Os presets reproduzem equações publicadas para algumas capitais — os parâmetros estão marcados [CONFIRMAR] e devem ser conferidos na fonte original ou no manual de drenagem do município; para outras cidades escolha 'Personalizado' e informe K, a, b e c.",
+  fields: [
+    { id: "cidade", label: "Cidade / equação", type: "select", options: [
+      ...Object.entries(IDF_PRESETS).map(([value, p]) => ({ value, label: p.label })),
+      { value: "personalizado", label: "Personalizado (informar K, a, b, c)" },
+    ] },
+    { id: "K", label: "K", ph: "1747.9", hint: "—", dependsOn: dependeCustom },
+    { id: "a", label: "a (expoente de T)", ph: "0.181", hint: "—", dependsOn: dependeCustom },
+    { id: "b", label: "b", ph: "15", hint: "min", dependsOn: dependeCustom },
+    { id: "c", label: "c (expoente de t + b)", ph: "0.89", hint: "—", dependsOn: dependeCustom },
+    { id: "T", label: "período de retorno T", ph: "10", hint: "anos" },
+    { id: "t", label: "duração da chuva t (≈ tc)", ph: "10", hint: "min" },
+  ],
+  example: { cidade: "sp", T: 10, t: 10 },
+  calc(v) {
+    const p = v.cidade === "personalizado" ? { label: "Personalizado", K: v.K, a: v.a, b: v.b, c: v.c } : IDF_PRESETS[v.cidade];
+    if (!p) throw new Error("Cidade inválida");
+    pos(p.K, "K"); pos(p.c, "c");
+    if (!(p.b >= 0)) throw new Error("b deve ser ≥ 0");
+    if (!(v.T >= 1)) throw new Error("T deve ser ≥ 1 ano");
+    pos(v.t, "Duração t");
+    const i = idfIntensidade(p.K, p.a, p.b, p.c, v.T, v.t);
+    const tabela = [5, 10, 15, 30, 60, 120].map((t) => `t = ${String(t).padStart(3)} min → i = ${fx(idfIntensidade(p.K, p.a, p.b, p.c, v.T, t), 1).padStart(6)} mm/h`);
+    return {
+      val: [
+        `── EQUAÇÃO ──────────────────────────`,
+        `${p.label}`,
+        `i = ${p.K}·T^${p.a} / (t + ${p.b})^${p.c}`,
+        `── RESULTADO (T = ${v.T} anos, t = ${v.t} min) ──`,
+        `i = ${fx(i, 1)} mm/h`,
+        `altura de chuva h = i·t/60 = ${fx((i * v.t) / 60, 1)} mm`,
+        `── CURVA PARA T = ${v.T} anos ───────────`,
+        ...tabela,
+        v.cidade !== "personalizado" ? `⚠ parâmetros do preset marcados [CONFIRMAR] — confira na fonte/manual municipal` : `→ parâmetros informados pelo usuário`,
+      ].join("\n"),
+      unit: "", multi: true,
+      links: [{ label: "Usar esta intensidade na drenagem predial", area: "civil", calcId: "tubos", values: { I: Number(fx(i, 1)), a: 5, hT: 1.5, b: 12, nCond: 1, mat: "0.011", wC: 15, sC: 0.5, sH: 1 } }],
+    };
+  },
+  result: "intensidade de chuva",
+};
+
+/* C2 — Laje maciça retangular, carga uniforme — método de Marcus (faixas + correção de torção) */
+const BORDAS = [
+  { value: "AA", label: "apoio – apoio" },
+  { value: "AE", label: "apoio – engaste" },
+  { value: "EE", label: "engaste – engaste" },
+];
+/* coeficiente de flecha da faixa (δ = c·p·l⁴/EI), divisor do momento positivo m e do negativo n (X = p·l²/n) */
+const FAIXA = { AA: { c: 5 / 384, m: 8, n: null }, AE: { c: 2 / 384, m: 14.22, n: 8 }, EE: { c: 1 / 384, m: 24, n: 12 } };
+
+/** Laje por Marcus: kx = cy·ly⁴/(cx·lx⁴ + cy·ly⁴); M = k·p·l²/m·ν; ν = 1 − (20/3)·(k/m)·(l/l_outro)². [CONFIRMAR] vs. tabelas de Bares */
+export function lajeMarcus(lx, ly, p, bx, by) {
+  const fxS = FAIXA[bx], fyS = FAIXA[by];
+  const lam = ly / lx;
+  if (lam > 2) {
+    return { umaDirecao: true, lam, kx: 1, ky: 0, Mx: (p * lx * lx) / fxS.m, My: 0, Xx: fxS.n ? (p * lx * lx) / fxS.n : 0, Xy: 0 };
+  }
+  const kx = (fyS.c * ly ** 4) / (fxS.c * lx ** 4 + fyS.c * ly ** 4), ky = 1 - kx;
+  const nux = 1 - (20 / 3) * (kx / fxS.m) * (lx / ly) ** 2;
+  const nuy = 1 - (20 / 3) * (ky / fyS.m) * (ly / lx) ** 2;
+  return {
+    umaDirecao: false, lam, kx, ky, nux, nuy,
+    Mx: ((kx * p * lx * lx) / fxS.m) * nux,
+    My: ((ky * p * ly * ly) / fyS.m) * nuy,
+    Xx: fxS.n ? (kx * p * lx * lx) / fxS.n : 0,
+    Xy: fyS.n ? (ky * p * ly * ly) / fyS.n : 0,
+  };
+}
+
+/** Armadura por metro (cm²/m) para Md (kN·m/m) e d (cm). null se Kmd > limite. */
+function asPorMetro(Md, d, fck, fyk) {
+  if (Md <= 0) return 0;
+  const fcd = fcdOf(fck), fyd = fydOf(fyk);
+  const Kmd = (Md * 1e6) / (1000 * (d * 10) ** 2 * fcd);
+  if (Kmd > KMD_LIM) return null;
+  const z = d * (1 - 0.4 * bxDeKmd(Kmd));
+  return (Md * 1e6) / (z * 10 * fyd) / 100;
+}
+
+const HMIN_LAJE = { piso: 8, cobertura: 7, balanco: 10, veiculo: 10, veiculo_pesado: 12 }; // cm — NBR 6118 §13.2.4.1
+
+const laje = {
+  id: "laje",
+  icon: "concrete",
+  name: "Laje Maciça — Momentos e Armadura (NBR 6118)",
+  desc: "momentos por Marcus, armadura por metro, ρmín de laje e espaçamento",
+  norma: "NBR 6118 §13.2.4 · §19.3",
+  formula:
+    "p = 1,4·(25·h + g_rev + q) | kx = cy·ly⁴/(cx·lx⁴ + cy·ly⁴) | ν = 1 − (20/3)·(k/m)·(lx/ly)² | " +
+    "M = k·p·l²/m·ν | X = k·p·l²/n | As = Md/(z·fyd) por metro | ρ⁺ ≥ 0,67·ρmín ; ρ⁻ ≥ ρmín | s ≤ mín(2h; 20 cm)",
+  context:
+    "Laje maciça retangular com carga uniforme. lx é o MENOR vão e ly o maior; para cada direção escolha a vinculação das duas bordas que a cortam (apoio ou engaste). Se ly/lx > 2 a laje é armada em uma direção (faixa de 1 m como viga). Caso contrário, os momentos vêm do método de Marcus — divisão da carga entre as faixas pela igualdade de flechas no centro e redução pela rigidez à torção. É um método simplificado clássico; as tabelas de Bares/Czerny (teoria das placas, ν = 0,2) dão valores um pouco diferentes [CONFIRMAR]. Peso próprio 25 kN/m³ automático. Armadura mínima da Tab. 19.1 (positiva em laje armada em 2 direções: 0,67·ρmín; negativa: ρmín) e espaçamento máximo de §20.1. Espessura mínima de §13.2.4.1.",
+  fields: [
+    { id: "lx", label: "menor vão lx", ph: "4.0", hint: "m" },
+    { id: "ly", label: "maior vão ly", ph: "5.0", hint: "m" },
+    { id: "bx", label: "Bordas que cortam lx (direção x)", type: "select", options: BORDAS },
+    { id: "by", label: "Bordas que cortam ly (direção y)", type: "select", options: BORDAS },
+    { id: "h", label: "espessura h", ph: "10", hint: "cm" },
+    { id: "grev", label: "revestimento + alvenaria g", ph: "1.0", hint: "kN/m²", units: U_KN_M2 },
+    { id: "q", label: "carga variável q", ph: "2.0", hint: "kN/m²", units: U_KN_M2 },
+    { id: "uso", label: "Uso da laje", type: "select", options: [
+      { value: "piso", label: "Piso (não em balanço) — h ≥ 8 cm" },
+      { value: "cobertura", label: "Cobertura (não em balanço) — h ≥ 7 cm" },
+      { value: "balanco", label: "Em balanço — h ≥ 10 cm" },
+      { value: "veiculo", label: "Veículos ≤ 30 kN — h ≥ 10 cm" },
+      { value: "veiculo_pesado", label: "Veículos > 30 kN — h ≥ 12 cm" },
+    ] },
+    { id: "fck", label: "fck", ph: "25", hint: "MPa" },
+    { id: "fyk", label: "fyk", ph: "500", hint: "MPa" },
+    { id: "cob", label: "cobrimento", ph: "2.5", hint: "cm" },
+  ],
+  example: { lx: 4, ly: 5, bx: "AA", by: "AA", h: 10, grev: 1, q: 2, uso: "piso", fck: 25, fyk: 500, cob: 2.5 },
+  calc(v) {
+    pos(v.lx, "lx"); pos(v.ly, "ly"); pos(v.h, "h"); pos(v.cob, "Cobrimento");
+    if (v.ly < v.lx) throw new Error("lx deve ser o MENOR vão (troque lx e ly e as vinculações)");
+    if (v.grev < 0 || v.q < 0) throw new Error("Cargas não podem ser negativas");
+    checkFck(v.fck); checkFyk(v.fyk);
+    const hmin = HMIN_LAJE[v.uso];
+    const g = 25 * (v.h / 100) + v.grev;             // kN/m²
+    const pk = g + v.q, pd = 1.4 * pk;
+    const r = lajeMarcus(v.lx, v.ly, pd, v.bx, v.by);
+    const phi = 1.0;                                 // cm (φ10 estimado)
+    const dx = v.h - v.cob - phi / 2, dy = dx - phi;
+    if (dy <= 0) throw new Error("Espessura insuficiente para o cobrimento");
+    const rhoMin = rhoMinFlexao(v.fck);
+    const AsMinPos = (r.umaDirecao ? 1 : 0.67) * rhoMin * 100 * v.h;
+    const AsMinNeg = rhoMin * 100 * v.h;
+    const sMax = Math.min(2 * v.h, 20);
+    const phiMax = (v.h * 10) / 8;
+    const bitolas = [5, 6.3, 8, 10, 12.5].filter((b) => b <= phiMax);
+    const arm = (nome, Md, d, min) => {
+      const As = asPorMetro(Md, d, v.fck, v.fyk);
+      if (As === null) return [`${nome}: Md = ${fx(Md)} kN·m/m → ✗ Kmd acima do limite — aumente h`];
+      const Af = Math.max(As, min);
+      const op = sugerirEspacamento(Af, bitolas, 7, sMax);
+      return [`${nome}: Md = ${fx(Md)} kN·m/m → As = ${fx(As)} cm²/m ${As < min ? `(mín ${fx(min)})` : ""} → ${op.length ? op.slice(0, 2).map((o) => `φ${o.phi} c/ ${o.s}`).join(" | ") : "⚠ revisar bitola"}`];
+    };
+    const secDist = r.umaDirecao ? Math.max(0.2 * Math.max(asPorMetro(r.Mx, dx, v.fck, v.fyk) ?? 0, AsMinPos), 0.5 * rhoMin * 100 * v.h, 0.9) : 0;
+    return {
+      val: [
+        `── GEOMETRIA ────────────────────────`,
+        `λ = ly/lx = ${fx(r.lam, 3)} → ${r.umaDirecao ? "armada em UMA direção (λ > 2)" : "armada em DUAS direções"}`,
+        v.h >= hmin ? `✓ h = ${v.h} cm ≥ h,mín = ${hmin} cm (§13.2.4.1)` : `✗ h = ${v.h} cm < h,mín = ${hmin} cm (§13.2.4.1)`,
+        `── CARGAS ───────────────────────────`,
+        `g = 25·h + g_rev = ${fx(g)} kN/m²   q = ${fx(v.q)} kN/m²`,
+        `pd = 1,4·(g + q) = ${fx(pd)} kN/m²`,
+        `── MOMENTOS DE CÁLCULO (Marcus) ─────`,
+        r.umaDirecao ? `faixa de 1 m na direção x` : `kx = ${fx(r.kx, 3)}  ky = ${fx(r.ky, 3)}   νx = ${fx(r.nux, 3)}  νy = ${fx(r.nuy, 3)}`,
+        `Mx = ${fx(r.Mx)}   My = ${fx(r.My)}   kN·m/m (positivos)`,
+        `X'x = ${fx(r.Xx)}  X'y = ${fx(r.Xy)}  kN·m/m (negativos, nos engastes)`,
+        `── ARMADURAS (por metro) ────────────`,
+        `dx = ${fx(dx, 1)} cm   dy = ${fx(dy, 1)} cm   s,máx = ${fx(sMax, 0)} cm   φ ≤ h/8 = ${fx(phiMax, 1)} mm`,
+        ...arm("Positiva x", r.Mx, dx, AsMinPos),
+        ...(r.umaDirecao
+          ? [`Distribuição y: As ≥ ${fx(secDist)} cm²/m (20% da principal; ≥ 0,9 cm²/m) → ${sugerirEspacamento(secDist, bitolas, 7, 33).slice(0, 1).map((o) => `φ${o.phi} c/ ${o.s}`).join("") || "⚠ revisar"}`]
+          : arm("Positiva y", r.My, dy, AsMinPos)),
+        ...(r.Xx > 0 ? arm("Negativa x", r.Xx, dx, AsMinNeg) : []),
+        ...(r.Xy > 0 ? arm("Negativa y", r.Xy, dx, AsMinNeg) : []),
+        `⚠ coeficientes pelo método de Marcus — compare com as tabelas de Bares [CONFIRMAR]; flecha da laje não verificada`,
+      ].join("\n"),
+      unit: "", multi: true,
+    };
+  },
+  result: "laje maciça",
+};
+
+/* C3 — Flecha de viga CA biapoiada (ELS-DEF) — NBR 6118 §17.3.2.1 */
+/** ξ(t) — §17.3.2.1.2 (t em meses) */
+export const xiFluencia = (t) => (t > 70 ? 2 : 0.68 * Math.pow(0.996, t) * Math.pow(t, 0.32));
+
+export function flechaVigaCA({ L, bw, h, cob, fck, As, Asl = 0, gk, qk, psi2 = 0.3, t0 = 1 }) {
+  const Eci = 5600 * Math.sqrt(fck);                     // MPa (αE = 1, granito)
+  const ai = Math.min(0.8 + (0.2 * fck) / 80, 1);
+  const Ecs = ai * Eci;                                  // MPa
+  const d = h - cob - 0.63 - 1.0, dl = cob + 0.63 + 0.5;  // cm
+  const Ic = (bw * h ** 3) / 12;                         // cm⁴
+  const fct = fctm(fck);                                 // MPa
+  const Mr = (1.5 * fct * (Ic * 1e4)) / ((h / 2) * 10) / 1e6; // kN·m  (α = 1,5 retangular)
+  const ae = ES / Ecs;
+  // Estádio II: bw/2·x² + αe(As + As')·x − αe(As·d + As'·d') = 0
+  const A = bw / 2, B = ae * (As + Asl), C = -ae * (As * d + Asl * dl);
+  const x = (-B + Math.sqrt(B * B - 4 * A * C)) / (2 * A);
+  const III = (bw * x ** 3) / 3 + ae * As * (d - x) ** 2 + ae * Asl * (x - dl) ** 2; // cm⁴
+  const pqp = gk + psi2 * qk;                            // kN/m
+  const Ma = (pqp * L * L) / 8;                          // kN·m
+  const r3 = Ma > 0 ? Math.min(Mr / Ma, 1) ** 3 : 1;
+  const Ieq = Math.min(r3 * Ic + (1 - r3) * III, Ic);    // cm⁴
+  const EI = Ecs * 1e3 * Ieq * 1e-8;                     // kN·m²  (MPa→kN/m² ×1e3; cm⁴→m⁴ ×1e-8)
+  const d0 = (5 * pqp * L ** 4) / (384 * EI) * 1000;     // mm
+  const rhol = Asl / (bw * d);
+  const af = (xiFluencia(71) - xiFluencia(t0)) / (1 + 50 * rhol);
+  const dt = d0 * (1 + af);
+  return { Eci, Ecs, d, Ic, Mr, ae, x, III, pqp, Ma, Ieq, EI, d0, af, dt, lim: (L * 1000) / 250 };
+}
+
+const flechaCA = {
+  id: "flecha_ca",
+  icon: "deflect",
+  name: "Flecha de Viga CA — Branson + Fluência (NBR 6118)",
+  desc: "inércia equivalente, flecha imediata e diferida × L/250",
+  norma: "NBR 6118 §17.3.2.1",
+  formula:
+    "Ecs = αi·5600·√fck | Mr = 1,5·fct,m·Ic/yt | Estádio II: bw·x²/2 = αe·As·(d − x) | " +
+    "Ieq = (Mr/Ma)³·Ic + [1 − (Mr/Ma)³]·III | pqp = g + ψ2·q | δ0 = 5·pqp·L⁴/(384·Ecs·Ieq) | " +
+    "αf = Δξ/(1 + 50ρ') | δ∞ = δ0·(1 + αf) ≤ L/250",
+  context:
+    "Verificação do estado-limite de deformação excessiva de viga biapoiada de concreto armado. A rigidez é a inércia equivalente de Branson entre o estádio I (seção bruta Ic) e o estádio II (seção fissurada III), usando o momento de fissuração Mr (α = 1,5 para seção retangular) e o momento da combinação quase permanente Ma = (g + ψ2·q)·L²/8 (ψ2 = 0,3 para edifícios residenciais; 0,4 comerciais; 0,6 bibliotecas/garagens). A flecha diferida no tempo multiplica a imediata por αf = Δξ/(1 + 50ρ'), com ξ(t) da norma (t0 = idade de aplicação da carga, em meses). Limite visual: L/250. Use a armadura As adotada no dimensionamento (o cálculo de Viga CA traz um link para cá).",
+  fields: [
+    { id: "L", label: "vão L", ph: "6.0", hint: "m" },
+    { id: "bw", label: "largura bw", ph: "25", hint: "cm" },
+    { id: "h", label: "altura h", ph: "60", hint: "cm" },
+    { id: "cob", label: "cobrimento", ph: "3.0", hint: "cm" },
+    { id: "fck", label: "fck", ph: "25", hint: "MPa" },
+    { id: "As", label: "armadura tracionada As (adotada)", ph: "10.25", hint: "cm²" },
+    { id: "Asl", label: "armadura comprimida As' (opcional)", ph: "", hint: "cm²", optional: true },
+    { id: "gk", label: "carga permanente gk", ph: "20", hint: "kN/m", units: U_KN_M },
+    { id: "qk", label: "carga variável qk", ph: "15", hint: "kN/m", units: U_KN_M },
+    { id: "psi2", label: "ψ2 (opcional, padrão 0,3)", ph: "0.3", hint: "—", optional: true },
+    { id: "t0", label: "idade ao carregar t0 (opcional, padrão 1)", ph: "1", hint: "meses", optional: true },
+  ],
+  example: { L: 6, bw: 25, h: 60, cob: 3, fck: 25, As: 10.25, gk: 20, qk: 15 },
+  calc(v) {
+    pos(v.L, "L"); pos(v.bw, "bw"); pos(v.h, "h"); pos(v.As, "As"); pos(v.cob, "Cobrimento");
+    checkFck(v.fck);
+    if (v.gk < 0 || v.qk < 0) throw new Error("Cargas não podem ser negativas");
+    const psi2 = v.psi2 > 0 ? v.psi2 : 0.3, t0 = v.t0 > 0 ? v.t0 : 1;
+    if (psi2 > 1) throw new Error("ψ2 deve estar entre 0 e 1");
+    const r = flechaVigaCA({ L: v.L, bw: v.bw, h: v.h, cob: v.cob, fck: v.fck, As: v.As, Asl: v.Asl > 0 ? v.Asl : 0, gk: v.gk, qk: v.qk, psi2, t0 });
+    return {
+      val: [
+        `── MATERIAL E SEÇÃO ─────────────────`,
+        `Ecs = ${fx(r.Ecs, 0)} MPa   αe = Es/Ecs = ${fx(r.ae, 2)}   d = ${fx(r.d, 1)} cm`,
+        `Ic = ${fx(r.Ic, 0)} cm⁴   Mr = ${fx(r.Mr)} kN·m`,
+        `── ESTÁDIO II ───────────────────────`,
+        `x_II = ${fx(r.x, 2)} cm   I_II = ${fx(r.III, 0)} cm⁴`,
+        `── COMBINAÇÃO QUASE PERMANENTE ──────`,
+        `pqp = g + ψ2·q = ${fx(v.gk)} + ${psi2}·${fx(v.qk)} = ${fx(r.pqp)} kN/m`,
+        `Ma = pqp·L²/8 = ${fx(r.Ma)} kN·m  ${r.Ma > r.Mr ? "(fissurada: Ma > Mr)" : "(não fissurada: Ma ≤ Mr)"}`,
+        `Ieq (Branson) = ${fx(r.Ieq, 0)} cm⁴   E·I = ${fx(r.EI, 0)} kN·m²`,
+        `── FLECHAS ──────────────────────────`,
+        `δ0 (imediata) = ${fx(r.d0)} mm`,
+        `αf = Δξ/(1 + 50ρ') = ${fx(r.af, 3)}   (t0 = ${t0} mês)`,
+        `δ∞ (total) = δ0·(1 + αf) = ${fx(r.dt)} mm`,
+        r.dt <= r.lim ? `✓ δ∞ ≤ L/250 = ${fx(r.lim, 1)} mm` : `✗ δ∞ > L/250 = ${fx(r.lim, 1)} mm — aumentar h, As' ou contraflecha (≤ L/350)`,
+      ].join("\n"),
+      unit: "", multi: true,
+    };
+  },
+  result: "flecha CA",
+};
+
+/* C4 — Ancoragem e emenda por traspasse — NBR 6118 §9.4 / §9.5.2 */
+const ETA1 = { nervurada: 2.25, entalhada: 1.4, lisa: 1.0 };
+const ALFA0T = { "20": 1.2, "25": 1.4, "33": 1.6, "50": 1.8, "100": 2.0 };
+
+export function ancoragem({ phi, fck, fyk, barra = "nervurada", boa = true, AsCalc, AsEf, gancho = false, emendadas = "50" }) {
+  const n1 = ETA1[barra], n2 = boa ? 1 : 0.7, n3 = phi < 32 ? 1 : (132 - phi) / 100;
+  const fbd = n1 * n2 * n3 * fctdOf(fck);           // MPa
+  const fyd = fydOf(fyk);
+  const lb = Math.max((phi / 4) * (fyd / fbd), 25 * phi); // mm
+  const alfa = gancho ? 0.7 : 1;
+  const ratio = AsCalc > 0 && AsEf > 0 ? AsCalc / AsEf : 1;
+  const lbmin = Math.max(0.3 * lb, 10 * phi, 100);
+  const lbnec = Math.max(alfa * lb * ratio, lbmin);
+  const a0t = ALFA0T[emendadas];
+  const l0tmin = Math.max(0.3 * a0t * lb, 15 * phi, 200);
+  const l0t = Math.max(a0t * lbnec, l0tmin);
+  return { n1, n2, n3, fbd, fyd, lb, alfa, ratio, lbmin, lbnec, a0t, l0t, l0tmin };
+}
+
+const ancoragemCalc = {
+  id: "ancoragem",
+  icon: "beam",
+  name: "Ancoragem e Emenda por Traspasse (NBR 6118)",
+  desc: "comprimento de ancoragem básico/necessário e emenda de barras tracionadas",
+  norma: "NBR 6118 §9.4 · §9.5.2",
+  formula:
+    "fbd = η1·η2·η3·fctd | lb = (φ/4)·(fyd/fbd) ≥ 25φ | lb,nec = α·lb·As,calc/As,ef ≥ máx(0,3lb; 10φ; 100 mm) | " +
+    "l0t = α0t·lb,nec ≥ máx(0,3·α0t·lb; 15φ; 200 mm)",
+  context:
+    "Calcula quanto uma barra precisa 'entrar' no concreto para transferir sua força (ancoragem) e o comprimento de sobreposição de duas barras tracionadas (emenda por traspasse). A resistência de aderência fbd depende da superfície da barra (η1: nervurada CA-50 = 2,25; entalhada CA-60 = 1,4; lisa CA-25 = 1,0), da zona de aderência (η2: boa = 1,0; má = 0,7 — barras horizontais na parte superior de peças altas) e do diâmetro (η3). Ganchos na extremidade permitem α = 0,7 (com cobrimento ≥ 3φ). O coeficiente α0t cresce com a porcentagem de barras emendadas na mesma seção.",
+  fields: [
+    { id: "phi", label: "diâmetro da barra φ", ph: "16", hint: "mm" },
+    { id: "fck", label: "fck", ph: "25", hint: "MPa" },
+    { id: "fyk", label: "fyk", ph: "500", hint: "MPa" },
+    { id: "barra", label: "Superfície da barra (η1)", type: "select", options: [
+      { value: "nervurada", label: "Nervurada — CA-50 (η1 = 2,25)" },
+      { value: "entalhada", label: "Entalhada — CA-60 (η1 = 1,4)" },
+      { value: "lisa", label: "Lisa — CA-25 (η1 = 1,0)" },
+    ] },
+    { id: "aderencia", label: "Zona de aderência (η2)", type: "select", options: [
+      { value: "boa", label: "Boa aderência (η2 = 1,0)" },
+      { value: "ma", label: "Má aderência (η2 = 0,7)" },
+    ] },
+    { id: "gancho", label: "Extremidade", type: "select", options: [
+      { value: "reta", label: "Reta (α = 1,0)" },
+      { value: "gancho", label: "Com gancho (α = 0,7)" },
+    ] },
+    { id: "AsCalc", label: "As calculada (opcional)", ph: "", hint: "cm²", optional: true },
+    { id: "AsEf", label: "As efetiva (opcional)", ph: "", hint: "cm²", optional: true },
+    { id: "emendadas", label: "Barras emendadas na mesma seção", type: "select", options: [
+      { value: "20", label: "≤ 20% (α0t = 1,2)" }, { value: "25", label: "25% (α0t = 1,4)" },
+      { value: "33", label: "33% (α0t = 1,6)" }, { value: "50", label: "50% (α0t = 1,8)" },
+      { value: "100", label: "> 50% (α0t = 2,0)" },
+    ] },
+  ],
+  example: { phi: 16, fck: 25, fyk: 500, barra: "nervurada", aderencia: "boa", gancho: "reta", emendadas: "50" },
+  calc(v) {
+    pos(v.phi, "φ"); checkFck(v.fck); checkFyk(v.fyk);
+    if ((v.AsCalc > 0) !== (v.AsEf > 0)) throw new Error("Informe As calculada e As efetiva juntas (ou nenhuma)");
+    if (v.AsCalc > v.AsEf) throw new Error("As calculada não pode ser maior que a efetiva");
+    const r = ancoragem({ phi: v.phi, fck: v.fck, fyk: v.fyk, barra: v.barra, boa: v.aderencia === "boa", AsCalc: v.AsCalc, AsEf: v.AsEf, gancho: v.gancho === "gancho", emendadas: v.emendadas });
+    const cm = (mm) => `${fx(mm / 10, 1)} cm (${fx(mm / v.phi, 1)}φ)`;
+    return {
+      val: [
+        `── ADERÊNCIA ────────────────────────`,
+        `η1 = ${r.n1}   η2 = ${r.n2}   η3 = ${fx(r.n3, 2)}   fctd = ${fx(fctdOf(v.fck), 3)} MPa`,
+        `fbd = η1·η2·η3·fctd = ${fx(r.fbd, 3)} MPa`,
+        `── ANCORAGEM ────────────────────────`,
+        `lb = (φ/4)·(fyd/fbd) = ${cm(r.lb)}  (fyd = ${fx(r.fyd)} MPa; ≥ 25φ)`,
+        `α = ${r.alfa}   As,calc/As,ef = ${fx(r.ratio, 3)}`,
+        `lb,mín = máx(0,3lb; 10φ; 100 mm) = ${cm(r.lbmin)}`,
+        `lb,nec = ${cm(r.lbnec)}`,
+        `── EMENDA POR TRASPASSE (tração) ────`,
+        `α0t = ${r.a0t}   l0t,mín = ${cm(r.l0tmin)}`,
+        `l0t = α0t·lb,nec = ${cm(r.l0t)}`,
+        v.phi > 32 ? `✗ φ > 32 mm: emenda por traspasse não permitida (§9.5.2)` : `✓ traspasse permitido para φ ≤ 32 mm`,
+      ].join("\n"),
+      unit: "", multi: true,
+    };
+  },
+  result: "ancoragem",
+};
+
+/* C5 — Consumo de materiais */
+const TAXA_ACO = { viga: 100, pilar: 120, laje: 80, sapata: 60 }; // kg/m³ — valores típicos [aproximados]
+const DENS = { cimento: 3.15, areia: 2.65, brita: 2.70 };         // kg/dm³ (massa específica)
+const MASSA_UNIT = { areia: 1.5, brita: 1.4 };                     // t/m³ (massa unitária solta) [aproximada]
+
+/** Consumo de cimento (kg/m³) para traço 1:a:p em massa e fator a/c: C = 1000/(1/γc + a/γa + p/γp + a/c) */
+export const consumoCimento = (a, p, ac) => 1000 / (1 / DENS.cimento + a / DENS.areia + p / DENS.brita + ac);
+
+const materiais = {
+  id: "materiais",
+  icon: "concrete",
+  name: "Consumo de Materiais — Concreto, Forma e Aço",
+  desc: "volume, forma, aço por taxa e cimento/areia/brita pelo traço",
+  norma: "Estimativa de quantitativos",
+  formula:
+    "V = n·c·b·h | Forma: viga (2h + b)·c · pilar 2(b + h)·c · laje c·b + 2(c + b)·h · sapata 2(c + b)·h | " +
+    "Aço = taxa·V | C = 1000/(1/3,15 + a/2,65 + p/2,70 + a/c) | areia = a·C ; brita = p·C ; água = (a/c)·C",
+  context:
+    "Levantamento rápido de quantitativos de um elemento de concreto armado (repetido n vezes). Volume de concreto, área de forma (faces em contato com o concreto) e peso de aço por taxa típica (kg de aço por m³ de concreto — valores aproximados por elemento, substitua pelo do projeto quando houver). Consumo de cimento pelo método do volume absoluto com traço em massa 1 : a : p e fator água/cimento, usando massas específicas usuais; areia e brita em kg e em m³ (massa unitária solta aproximada). Não inclui perdas — acrescente 5 a 10% para compra.",
+  fields: [
+    { id: "elem", label: "Elemento", type: "select", options: [
+      { value: "viga", label: "Viga" }, { value: "pilar", label: "Pilar" }, { value: "laje", label: "Laje" }, { value: "sapata", label: "Sapata" },
+    ] },
+    { id: "c", label: "comprimento c (vão / altura do pilar / lado)", ph: "6.0", hint: "m" },
+    { id: "b", label: "largura b", ph: "20", hint: "cm" },
+    { id: "h", label: "altura / espessura h", ph: "50", hint: "cm" },
+    { id: "n", label: "quantidade de elementos", ph: "1", hint: "un" },
+    { id: "taxa", label: "taxa de aço (opcional — típica se vazio)", ph: "", hint: "kg/m³", optional: true },
+    { id: "a", label: "traço — areia (a)", ph: "2", hint: "kg/kg cim." },
+    { id: "p", label: "traço — brita (p)", ph: "3", hint: "kg/kg cim." },
+    { id: "ac", label: "fator água/cimento", ph: "0.55", hint: "—" },
+  ],
+  example: { elem: "viga", c: 6, b: 20, h: 50, n: 1, a: 2, p: 3, ac: 0.55 },
+  calc(v) {
+    pos(v.c, "c"); pos(v.b, "b"); pos(v.h, "h"); pos(v.ac, "a/c");
+    if (!(v.n >= 1) || !Number.isInteger(v.n)) throw new Error("Quantidade deve ser inteira ≥ 1");
+    if (v.a < 0 || v.p < 0) throw new Error("Traço inválido");
+    const b = v.b / 100, h = v.h / 100;
+    const V = v.n * v.c * b * h;
+    const forma1 = { viga: (2 * h + b) * v.c, pilar: 2 * (b + h) * v.c, laje: v.c * b + 2 * (v.c + b) * h, sapata: 2 * (v.c + b) * h }[v.elem];
+    const forma = forma1 * v.n;
+    const taxa = v.taxa > 0 ? v.taxa : TAXA_ACO[v.elem];
+    const aco = taxa * V;
+    const C = consumoCimento(v.a, v.p, v.ac);
+    const cim = C * V, areia = v.a * C * V, brita = v.p * C * V, agua = v.ac * C * V;
+    return {
+      val: [
+        `── CONCRETO ─────────────────────────`,
+        `V = ${v.n}·${v.c}·${fx(b)}·${fx(h)} = ${fx(V, 3)} m³`,
+        `── FORMA ────────────────────────────`,
+        `Área de forma = ${fx(forma, 2)} m²`,
+        `── AÇO ──────────────────────────────`,
+        `taxa = ${taxa} kg/m³ ${v.taxa > 0 ? "(informada)" : "(típica — aproximada)"} → ${fx(aco, 1)} kg`,
+        `── TRAÇO 1 : ${v.a} : ${v.p}  (a/c = ${v.ac}) ──`,
+        `consumo de cimento C = ${fx(C, 1)} kg/m³`,
+        `cimento: ${fx(cim, 1)} kg (${fx(cim / 50, 1)} sacos de 50 kg)`,
+        `areia:   ${fx(areia, 1)} kg (≈ ${fx(areia / 1000 / MASSA_UNIT.areia, 3)} m³)`,
+        `brita:   ${fx(brita, 1)} kg (≈ ${fx(brita / 1000 / MASSA_UNIT.brita, 3)} m³)`,
+        `água:    ${fx(agua, 1)} L`,
+        `⚠ sem perdas — acrescente 5–10% para compra; massas unitárias aproximadas`,
+      ].join("\n"),
+      unit: "", multi: true,
+    };
+  },
+  result: "materiais",
 };
 
 export const CIVIL = {
   label: "Civil",
   icon: "foundation",
-  calcs: [vigaCA, sapata, drenagemPredial, redeUrbana, pilar, vigaContinua],
+  calcs: [vigaCA, sapata, drenagemPredial, redeUrbana, pilar, vigaContinua, idf, laje, flechaCA, ancoragemCalc, materiais],
 };

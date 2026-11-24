@@ -7,6 +7,7 @@
 "use strict";
 import { CIVIL } from "./civil.js";
 import { ELETRICA } from "./eletrica.js";
+import { MECANICA } from "./mecanica.js";
 
 /* ═══════════════════════════════════════════════════
    ÍCONES SVG
@@ -117,172 +118,7 @@ export const ICONS = {
 ═══════════════════════════════════════════════════ */
 export const DATA = {
 
-  /* ── MECÂNICA ── */
-  mecanica: {
-    label: "Mecânica",
-    icon: "tool",
-    calcs: [
-      {
-        id: "rpm",
-        icon: "rotate",
-        name: "Cálculo de RPM",
-        desc: "velocidade de corte × diâmetro",
-        formula: "RPM = (1000 × Vc) / (π × D)",
-        context: "Determina a rotação ideal de uma ferramenta de corte (fresa, broca, torno) a partir da velocidade de corte recomendada pelo fabricante e o diâmetro da ferramenta. Essencial para programação CNC e setup de máquinas-ferramenta.",
-        fields: [
-          { id: "vc", label: "Vc — velocidade de corte", ph: "80", hint: "m/min" },
-          { id: "d",  label: "D — diâmetro da ferramenta", ph: "50", hint: "mm" },
-        ],
-        calc(v) {
-          if (v.d <= 0) throw new Error("Diâmetro deve ser maior que zero");
-          return { val: ((1000 * v.vc) / (Math.PI * v.d)).toFixed(1), unit: "rpm" };
-        },
-        result: "RPM",
-      },
-      {
-        id: "conv",
-        icon: "arrow",
-        name: "Conversão mm → pol",
-        desc: "milímetros para polegadas e fração",
-        formula: "1 in = 25,4 mm",
-        context: "Converte medidas métricas para o sistema imperial, com representação em fração decimal usada em ferramentas e peças importadas. Útil em manutenção industrial e projetos com componentes americanos.",
-        fields: [{ id: "mm", label: "valor em milímetros", ph: "25.4", hint: "mm" }],
-        calc(v) {
-          const inches = v.mm / 25.4;
-          const FRACS = [
-            [1,64],[1,32],[3,64],[1,16],[5,64],[3,32],[7,64],[1,8],
-            [9,64],[5,32],[11,64],[3,16],[13,64],[7,32],[15,64],[1,4],
-            [17,64],[9,32],[19,64],[5,16],[21,64],[11,32],[23,64],[3,8],
-            [25,64],[13,32],[27,64],[7,16],[29,64],[15,32],[31,64],[1,2],
-            [33,64],[17,32],[35,64],[9,16],[37,64],[19,32],[39,64],[5,8],
-            [41,64],[21,32],[43,64],[11,16],[45,64],[23,32],[47,64],[3,4],
-            [49,64],[25,32],[51,64],[13,16],[53,64],[27,32],[55,64],[7,8],
-            [57,64],[29,32],[59,64],[15,16],[61,64],[31,32],[63,64],[1,1],
-          ];
-          if (v.mm < 0) throw new Error("Informe um valor ≥ 0");
-          let whole = Math.floor(inches);
-          const frac  = inches - whole;
-          let bestFrac = [0, 64], bestDiff = frac;
-          for (const [n, d] of FRACS) {
-            const diff = Math.abs(n / d - frac);
-            if (diff < bestDiff) { bestDiff = diff; bestFrac = [n, d]; }
-          }
-          // fração arredondada para 1/1 → soma 1 à parte inteira
-          if (bestFrac[0] === bestFrac[1]) { whole += 1; bestFrac = [0, 64]; }
-          const fracPart = bestFrac[0] === 0 ? "" : `${bestFrac[0]}/${bestFrac[1]}`;
-          const fracStr = frac < 0.001 ? "" : ` (≈ ${[whole > 0 || !fracPart ? whole : "", fracPart].filter(Boolean).join(" ")}")`;
-          return { val: inches.toFixed(4) + " in" + fracStr, unit: "" };
-        },
-        result: "polegadas",
-      },
-      {
-        id: "polia",
-        icon: "circle",
-        name: "Relação de polias",
-        desc: "N2 pela relação de diâmetros",
-        formula: "N2 = (D1 × N1) / D2",
-        context: "Calcula a rotação de saída de um sistema de transmissão por polias e correias. Usado para adequar a velocidade de motores a máquinas como compressores, bombas e ventiladores.",
-        fields: [
-          { id: "d1", label: "D1 — diâmetro da polia motriz", ph: "100", hint: "mm" },
-          { id: "n1", label: "N1 — rotação do motor", ph: "1200", hint: "rpm" },
-          { id: "d2", label: "D2 — diâmetro da polia movida", ph: "200", hint: "mm" },
-        ],
-        calc(v) {
-          if (v.d2 <= 0) throw new Error("D2 deve ser > 0");
-          return { val: ((v.d1 * v.n1) / v.d2).toFixed(1), unit: "rpm" };
-        },
-        result: "N2",
-      },
-      {
-        id: "avanco",
-        icon: "screw",
-        name: "Avanço de roscas",
-        desc: "passo × número de entradas",
-        formula: "Avanço = Passo × Nº entradas",
-        context: "Determina o avanço axial por volta em sistemas de parafuso/porca. Fundamental em projetos de fixação, roscas de movimento (trapezoidais, acme) e programação de tornos CNC.",
-        fields: [
-          { id: "p", label: "passo", ph: "1.5", hint: "mm" },
-          { id: "e", label: "nº de entradas", ph: "2", hint: "entradas" },
-        ],
-        calc(v) {
-          return { val: (v.p * v.e).toFixed(3), unit: "mm/volta" };
-        },
-        result: "avanço",
-      },
-      {
-        id: "cone",
-        icon: "triangle",
-        name: "Ângulo de cones",
-        desc: "torneamento cônico — ângulo de inclinação",
-        formula: "α = arctan((D1 − D2) / (2 × L))",
-        context: "Calcula o ângulo de inclinação para torneamento de peças cônicas. Usado para regulagem do carro superior do torno ou para programação de interpolação linear em CNC.",
-        fields: [
-          { id: "d1c", label: "D1 — diâmetro maior", ph: "60", hint: "mm" },
-          { id: "d2c", label: "D2 — diâmetro menor", ph: "40", hint: "mm" },
-          { id: "lc",  label: "L — comprimento do cone", ph: "100", hint: "mm" },
-        ],
-        calc(v) {
-          if (v.lc <= 0) throw new Error("Comprimento L deve ser > 0");
-          return {
-            val: (Math.atan((v.d1c - v.d2c) / (2 * v.lc)) * (180 / Math.PI)).toFixed(4),
-            unit: "°",
-          };
-        },
-        result: "ângulo α",
-      },
-      {
-        id: "tensao",
-        icon: "sigma",
-        name: "Tensão normal",
-        desc: "tensão de tração ou compressão na seção",
-        formula: "σ = F / A",
-        context: "Calcula a tensão normal em elementos estruturais submetidos a tração ou compressão. Compare o resultado com o limite de escoamento do material (ex: aço SAE 1045: ~310 MPa) para verificar segurança.",
-        fields: [
-          { id: "f", label: "força F aplicada", ph: "5000", hint: "N" },
-          { id: "a", label: "área A da seção transversal", ph: "100", hint: "mm²" },
-        ],
-        calc(v) {
-          if (v.a <= 0) throw new Error("Área deve ser > 0");
-          return { val: (v.f / v.a).toFixed(3), unit: "MPa" };
-        },
-        result: "σ (tensão)",
-      },
-      {
-        id: "potencia",
-        icon: "bolt",
-        name: "Potência mecânica",
-        desc: "potência de eixo por torque e rotação",
-        formula: "P = T × ω  |  ω = 2π × n / 60  |  1 cv = 735,5 W",
-        context: "Calcula a potência mecânica transmitida por um eixo em rotação. Use para dimensionar motores, redutores e verificar se a transmissão suporta a carga aplicada.",
-        fields: [
-          { id: "t", label: "torque T no eixo", ph: "50", hint: "N·m" },
-          { id: "n", label: "rotação n", ph: "1450", hint: "rpm" },
-        ],
-        calc(v) {
-          const P = v.t * 2 * Math.PI * v.n / 60;
-          return { val: `${P.toFixed(2)} W  =  ${(P / 1000).toFixed(3)} kW  =  ${(P / 735.5).toFixed(2)} cv`, unit: "" };
-        },
-        result: "potência P",
-      },
-      {
-        id: "dilatacao",
-        icon: "temp",
-        name: "Dilatação térmica linear",
-        desc: "variação de comprimento por temperatura",
-        formula: "ΔL = α × L₀ × ΔT",
-        context: "Calcula quanto uma peça se dilata com a variação de temperatura. Indispensável em projetos de trilhos, tubulações, eixos e montagens com ajuste de interferência.",
-        fields: [
-          { id: "al", label: "coef. de dilatação α (×10⁻⁶)", ph: "12", hint: "/°C" },
-          { id: "l0", label: "comprimento inicial L₀", ph: "1000", hint: "mm" },
-          { id: "dt", label: "variação de temperatura ΔT", ph: "80", hint: "°C" },
-        ],
-        calc(v) {
-          return { val: ((v.al * 1e-6) * v.l0 * v.dt).toFixed(4), unit: "mm" };
-        },
-        result: "ΔL",
-      },
-    ],
-  },
+  mecanica: MECANICA,
 
   civil: CIVIL,
 
@@ -300,23 +136,6 @@ export const DATA = {
   /* — Selos de norma (onde há norma real aplicável) — */
 
   /* — Diagramas (SVG técnico, herda cor via currentColor) — */
-
-  // RPM — ferramenta em rotação, diâmetro D, Vc tangencial
-  set("mecanica", "rpm", { diagram: `
-    <svg viewBox="0 0 300 132" class="dg" role="img" aria-label="Ferramenta de corte em rotação">
-      <line class="dg-cl" x1="150" y1="14" x2="150" y2="120"/>
-      <circle class="dg-line" cx="150" cy="66" r="40"/>
-      <circle class="dg-fill" cx="150" cy="66" r="3"/>
-      <line class="dg-dim" x1="110" y1="66" x2="190" y2="66"/>
-      <path class="dg-dim" d="M110 61 L110 71 M190 61 L190 71"/>
-      <text class="dg-t" x="146" y="60" text-anchor="end">D</text>
-      <path class="dg-line" d="M150 26 A 40 40 0 0 1 190 66" fill="none"/>
-      <path class="dg-line" d="M184 60 L190 66 L184 72" fill="none"/>
-      <text class="dg-t" x="214" y="52">n (rpm)</text>
-      <line class="dg-acc" x1="150" y1="26" x2="228" y2="26"/>
-      <path class="dg-acc" d="M222 22 L228 26 L222 30" fill="none"/>
-      <text class="dg-t-acc" x="186" y="20">Vc</text>
-    </svg>` });
 
   // Viga CA — viga biapoiada com carga distribuída + seção transversal
   set("civil", "concreto", { diagram: `
