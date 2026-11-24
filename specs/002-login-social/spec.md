@@ -31,6 +31,7 @@ automaticamente ao cadastro feito pelo admin (mesmo e-mail). Fase 1: só Google.
 | R11 | Após expirar: tela **"Login expirado — faça login novamente"** com **Encerrar sessão** e **Restaurar sessão**. A API responde 401 `SESSION_EXPIRED` enquanto isso. |
 | R12 | **Restaurar** só é possível **até 1 h após a expiração** (janela de restauração); renova por mais 6 h sem novo login Google. Depois da janela a sessão é apagada e é preciso entrar com o Google. |
 | R13 | Recarregar a página não pisca a tela de login: enquanto a sessão é verificada mostra-se uma tela neutra de carregamento. |
+| R14 | **Admin master**: os e-mails de `ADMIN_EMAILS` não podem ser rebaixados, desativados nem removidos por nenhum admin (validado no servidor); aparecem com o selo ★ master. Admins comuns também não podem ser desativados/removidos — só rebaixados (se não for o último). |
 | R9 | Rotas `/api/admin/*` exigem papel `admin` (verificado no servidor, nunca só no front). |
 
 ## Aceitação

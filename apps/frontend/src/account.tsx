@@ -112,6 +112,7 @@ type AdminUser = { id: string; name: string; email: string; role?: string | null
 export function AdminPanel({ me }: { me: SessionUser }) {
   const [users, setUsers] = React.useState<AdminUser[]>([]);
   const [linked, setLinked] = React.useState<Set<string>>(new Set());
+  const [masters, setMasters] = React.useState<Set<string>>(new Set());
   const [form, setForm] = React.useState({ name: "", email: "", role: "user" });
   const [msg, setMsg] = React.useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = React.useState(false);
@@ -122,6 +123,8 @@ export function AdminPanel({ me }: { me: SessionUser }) {
     setUsers((res.data?.users ?? []) as AdminUser[]);
     const l = await fetch("/api/admin/linked", { credentials: "include" });
     if (l.ok) setLinked(new Set(await l.json()));
+    const m = await fetch("/api/admin/masters", { credentials: "include" });
+    if (m.ok) setMasters(new Set(await m.json()));
   }, []);
   React.useEffect(() => { load(); }, [load]);
 
@@ -156,14 +159,17 @@ export function AdminPanel({ me }: { me: SessionUser }) {
     </form>
     {users.map((u) => {
       const self = u.id === me.id;
+      const master = masters.has(u.email.toLowerCase());
       return <div className="admin-row" key={u.id}>
         <span className="calc-info"><span className="hist-name">{u.name}{self ? " (você)" : ""}</span><span className="hist-sub">{u.email}</span></span>
         <span className="admin-tags">
+          {master && <span className="admin-tag is-master">★ master</span>}
           <span className={`admin-tag ${u.role === "admin" ? "is-admin" : ""}`}>{u.role === "admin" ? "admin" : "usuário"}</span>
           <span className={`admin-tag ${linked.has(u.id) ? "is-ok" : ""}`}>{linked.has(u.id) ? "Google vinculado" : "aguardando 1º login"}</span>
           {u.banned && <span className="admin-tag is-alert">desativado</span>}
         </span>
-        {!self && <span className="admin-actions">
+        {!self && master && <span className="admin-hint" title="Definido no servidor (ADMIN_EMAILS) — não pode ser alterado pelo painel">🔒 admin master</span>}
+        {!self && !master && <span className="admin-actions">
           <button disabled={busy} onClick={() => act(() => authClient.admin.setRole({ userId: u.id, role: u.role === "admin" ? "user" : "admin" }), "Papel atualizado")}>{u.role === "admin" ? "tornar usuário" : "tornar admin"}</button>
           {u.role === "admin"
             ? <span className="admin-hint" title="Admins não podem ser desativados nem removidos — rebaixe para usuário antes">🔒 protegido</span>
