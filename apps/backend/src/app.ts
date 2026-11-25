@@ -362,7 +362,13 @@ route("POST", /^\/api\/calculations\/([^/]+)\/([^/]+)$/, async (ctx) => {
   if (!payload?.values) return json(response, 400, { error: "values é obrigatório" });
   try {
     const result = calculate(areaKey, calculationId, payload.values);
-    json(response, 200, { calculationId, result: { value: result.val, unit: result.unit ?? "", multi: result.multi ?? false } });
+    json(response, 200, {
+      calculationId,
+      result: {
+        value: result.val, unit: result.unit ?? "", multi: result.multi ?? false,
+        links: result.links ?? [], steps: result.steps ?? [], materials: result.materials ?? [],
+      },
+    });
   } catch (error) {
     json(response, 422, { error: error instanceof Error ? error.message : "Erro no cálculo" });
   }

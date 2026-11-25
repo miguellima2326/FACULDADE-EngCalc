@@ -8,6 +8,8 @@ import {
   izTabela, resistenciaCondutor, SECOES_IZ, SECAO_MIN_AL, TEMP_OPERACAO, X_CABO_OHM_KM, K_ADIABATICO,
   type Material, type Isolacao, type Metodo,
 } from "./lib/nbr5410.js";
+import { step, n, materialsText, type Material as Mat } from "./lib/steps.js";
+import { REFS_ELETRICA } from "./referencias.js";
 
 const INSTALACAO_OPCOES = [
   { value: "enterrado_direto", label: "Enterrado direto no solo" },
@@ -242,6 +244,13 @@ export const ELETRICA = {
         const Ic = In * fc.Fc;
         const dV = quedaTensaoPct(v.K, v.L, In, v.V);
         const dvOk = dV <= v.dVadm;
+        const steps = [
+          step("In", "Corrente nominal", "In = 1000·S/(√3·V)", `1000·${n(v.S, 0)}/(1,732·${n(v.V, 0)})`, In, "A"),
+          step("Fc", "Fator de correção", "Fc = 1/(Kt·Ks·Kp·Kg)", `1/(${n(fc.Kt)}·${n(fc.Ks)}·${n(fc.Kp)}·${n(fc.Kg)})`, fc.Fc, "", 3),
+          step("Ic", "Corrente corrigida", "Ic = In·Fc", `${n(In)}·${n(fc.Fc, 3)}`, Ic, "A"),
+          step("dV", "Queda de tensão", "ΔV% = K·L·In/(10·V)", `${n(v.K, 3)}·${n(v.L, 0)}·${n(In)}/(10·${n(v.V, 0)})`, dV, "%", 3),
+        ];
+        const materials: Mat[] = temCabo ? [{ key: "cabo", label: `Cabo MT ${v.Sesc} mm² ${LABEL_ISOLACAO[v.isolacao as "pvc" | "xlpe"]}`, qty: 3 * v.L, unit: "m" }] : [];
 
         const lines = [
           ...linhasInstalacao(v, fc),
@@ -268,6 +277,7 @@ export const ELETRICA = {
             `── RESULTADO ────────────────────────`,
             `Fator determinante: ${determinante}`,
             (ampOk && dvOk) ? `✓ Cabo ${v.Sesc} mm² ATENDE aos critérios de MT` : `✗ Cabo ${v.Sesc} mm² NÃO ATENDE — revisar seção/instalação`,
+            ...materialsText(materials, "3 fases × L; sem sobras"),
           );
         } else {
           lines.push(
@@ -277,7 +287,7 @@ export const ELETRICA = {
             `⚠ verifique também a seção mínima por curto-circuito (cálculo "Seção Mínima do Cabo por Curto-Circuito")`,
           );
         }
-        return { val: lines.join("\n"), unit: "", multi: true };
+        return { val: lines.join("\n"), unit: "", multi: true, steps, materials };
       },
       result: "cabo MT",
     },
@@ -315,6 +325,14 @@ export const ELETRICA = {
         const IcCabo = Ic / v.Np;
         const dV = quedaTensaoPct(v.K, v.L, In / v.Np, v.V);
         const dvOk = dV <= v.dVadm;
+        const steps = [
+          step("In", "Corrente nominal", "In = 1000·S/(√3·V)", `1000·${n(v.S, 0)}/(1,732·${n(v.V, 0)})`, In, "A"),
+          step("Fc", "Fator de correção", "Fc = 1/(Kt·Ks·Kp·Kg)", `1/(${n(fc.Kt)}·${n(fc.Ks)}·${n(fc.Kp)}·${n(fc.Kg)})`, fc.Fc, "", 3),
+          step("Ic", "Corrente corrigida", "Ic = In·Fc", `${n(In)}·${n(fc.Fc, 3)}`, Ic, "A"),
+          step("IcCabo", "Corrente por cabo", "Ic/cabo = Ic/Np", `${n(Ic)}/${v.Np}`, IcCabo, "A"),
+          step("dV", "Queda de tensão", "ΔV% = K·L·(In/Np)/(10·V)", `${n(v.K, 3)}·${n(v.L, 0)}·${n(In / v.Np)}/(10·${n(v.V, 0)})`, dV, "%", 3),
+        ];
+        const materials: Mat[] = temCabo ? [{ key: "cabo", label: `Cabo BT ${v.Sesc} mm² ${LABEL_ISOLACAO[v.isolacao as "pvc" | "xlpe"]}`, qty: 3 * v.Np * v.L, unit: "m" }] : [];
 
         const lines = [
           ...linhasInstalacao(v, fc),
@@ -344,6 +362,7 @@ export const ELETRICA = {
             `── RESULTADO ────────────────────────`,
             `Fator determinante: ${determinante}`,
             (ampOk && dvOk) ? `✓ ${v.Np}×${v.Sesc} mm² ATENDE aos critérios de BT` : `✗ ${v.Np}×${v.Sesc} mm² NÃO ATENDE — revisar seção/Np`,
+            ...materialsText(materials, "3 fases × Np × L; sem neutro, terra e sobras"),
           );
         } else {
           lines.push(
@@ -353,7 +372,7 @@ export const ELETRICA = {
             `⚠ verifique também a seção mínima por curto-circuito`,
           );
         }
-        return { val: lines.join("\n"), unit: "", multi: true };
+        return { val: lines.join("\n"), unit: "", multi: true, steps, materials };
       },
       result: "cabo BT",
     },
@@ -377,6 +396,7 @@ export const ELETRICA = {
         { id: "Sesc", label: "seção do cabo candidato (opcional)",  ph: "185", hint: "mm²", optional: true },
       ],
       example: { Icc: 25, t: 0.5, material: "cu_pvc", Sesc: 185 },
+      references: REFS_ELETRICA.curto_circuito,
       calc(v: any) {
         if (!(v.Icc > 0)) throw new Error("Icc deve ser > 0");
         if (!(v.t > 0)) throw new Error("Tempo t deve ser > 0");
@@ -391,6 +411,10 @@ export const ELETRICA = {
         const Smin = secaoCurto(IccA, v.t, k);
         const Ssug = secaoComercial(Smin);
         const ok = temSesc ? v.Sesc >= Smin : true;
+        const steps = [
+          step("Smin", "Seção mínima (adiabática)", "Smín = Icc·√t/k", `${n(IccA, 0)}·√${n(v.t, 2)}/${n(k, 0)}`, Smin, "mm²"),
+          ...(Ssug !== null ? [step("Ssug", "Seção comercial", "próxima seção ≥ Smín", undefined, Ssug, "mm²", 1)] : []),
+        ];
 
         const lines = [
           `── CURTO-CIRCUITO (adiabática) ──────`,
@@ -406,7 +430,7 @@ export const ELETRICA = {
             ? (ok ? `✓ Seção informada suporta a Icc` : `✗ Seção informada INSUFICIENTE — usar ≥ ${Ssug ?? "630+"} mm²`)
             : (Ssug !== null ? `→ Recomendação automática: usar no mínimo ${Ssug} mm²` : `→ Recomendação: dividir em cabos paralelos`),
         ].filter((l) => l !== null);
-        return { val: lines.join("\n"), unit: "", multi: true };
+        return { val: lines.join("\n"), unit: "", multi: true, steps };
       },
       result: "seção mín. Icc",
     },
@@ -485,6 +509,18 @@ export const ELETRICA = {
           r.porCurto ? `Smín = ${(v.Icc * 1000).toFixed(0)}·√${t} / ${r.k} = ${r.sMinCurto.toFixed(1)} mm² → ${r.porCurto.s} mm² ✓` : (v.Icc ? `✗ Smín = ${r.sMinCurto.toFixed(1)} mm² > 300 mm²` : `não verificado (Icc não informada) ⚠ use o cálculo "Corrente de curto-circuito"`),
           `── RESULTADO ─────────────────────────`,
         ].filter((l): l is string => l !== null);
+        const kSis = sistema === "tri" ? "1,732" : "2";
+        const steps = [
+          v.modo === "potencia"
+            ? step("Ib", "Corrente de projeto", `Ib = P/(${sistema === "tri" ? "√3" : "1"}·V·cosφ)`, `${n(v.P * 1000, 0)}/(${sistema === "tri" ? "1,732·" : ""}${n(v.V, 0)}·${n(v.fp)})`, Ib, "A")
+            : step("Ib", "Corrente de projeto (informada)", "Ib", undefined, Ib, "A"),
+          step("K", "Fator de correção total", "K = Kt·Kg (·Ks no método D)", undefined, fc.Ktotal, "", 3),
+          ...(r.porCapacidade ? [step("Iz", `Capacidade corrigida (${r.porCapacidade.s} mm²)`, "Iz' = Iz(tabela)·K ≥ Ib", `${n(r.porCapacidade.iz, 0)}·${n(fc.Ktotal, 3)}`, r.porCapacidade.izCorr, "A", 1)] : []),
+          ...(r.porQueda ? [step("dV", `Queda de tensão (${r.porQueda.s} mm²)`, "ΔV% = k·Ib·L·(R·cosφ + X·senφ)/V·100", `${kSis}·${n(Ib)}·${n(v.L / 1000, 3)}·(${n(r.porQueda.R, 4)}·${n(v.fp)} + ${X_CABO_OHM_KM}·${n(Math.sqrt(1 - v.fp * v.fp), 3)})/${n(v.V, 0)}·100`, r.porQueda.dV, "%")] : []),
+          ...(r.sMinCurto > 0 ? [step("Scurto", "Seção mínima por curto", "Smín = Icc·√t/k", `${n(v.Icc * 1000, 0)}·√${n(t)}/${r.k}`, r.sMinCurto, "mm²", 1)] : []),
+          ...(r.adotada ? [step("S", "Seção adotada", "S = máx(S_capacidade; S_queda; S_curto)", undefined, r.adotada.s, "mm²", 1)] : []),
+        ];
+        const materials: Mat[] = r.adotada ? [{ key: "cabo", label: `Cabo ${r.adotada.s} mm² ${mat} ${LABEL_ISOLACAO[(v.isolacao ?? "xlpe") as Isolacao]}`, qty: r.carregados * v.L, unit: "m" }] : [];
         const links: any[] = [];
         if (r.adotada) {
           lines.push(
@@ -492,10 +528,11 @@ export const ELETRICA = {
             `Fator determinante: ${r.determinante}`,
             `Iz' da seção adotada = ${r.adotada.izCorr.toFixed(1)} A   ΔV = ${r.adotada.dV.toFixed(2)} %`,
             `⚠ Iz de tabela [CONFIRMAR NA NORMA]; condutor de proteção e neutro não dimensionados aqui`,
+            ...materialsText(materials, `${r.carregados} condutores carregados × L; sem neutro, terra e sobras`),
           );
           links.push({ label: `Escolher o disjuntor (Ib = ${Ib.toFixed(1)} A, Iz = ${r.adotada.izCorr.toFixed(1)} A)`, area: "eletrica", calcId: "disjuntor", values: { Ib: +Ib.toFixed(2), Iz: +r.adotada.izCorr.toFixed(1) } });
         } else lines.push(`✗ Nenhuma seção até 300 mm² atende os três critérios — divida o circuito ou use cabos em paralelo`);
-        return { val: lines.join("\n"), unit: "", multi: true, links };
+        return { val: lines.join("\n"), unit: "", multi: true, links, steps, materials };
       },
       result: "seção do cabo",
     },
@@ -522,6 +559,7 @@ export const ELETRICA = {
         { id: "np",  label: "cabos em paralelo por fase (opcional, padrão 1)", ph: "1", hint: "cabos", optional: true },
       ],
       example: { S: 1000, V: 380, Z: 5, XR: 5, secao: 95, material: "cu", L: 50, np: 1 },
+      references: REFS_ELETRICA.icc,
       calc(v: any) {
         if (!(v.S > 0)) throw new Error("Potência S deve ser > 0");
         if (!(v.V > 0)) throw new Error("Tensão V deve ser > 0");
@@ -535,6 +573,13 @@ export const ELETRICA = {
         const In = correnteNominal(v.S, v.V);
         const T = impedanciaTrafo(v.S, v.V, v.Z, XR);
         const IccT = iccTrifasica(v.V, T.R, T.X);
+        const steps = [
+          step("In", "Corrente nominal do trafo", "In = S/(√3·V)", `${n(v.S * 1000, 0)}/(1,732·${n(v.V, 0)})`, In, "A", 1),
+          step("ZT", "Impedância do trafo", "Z_T = (Z%/100)·V²/S", `(${n(v.Z)}/100)·${n(v.V, 0)}²/${n(v.S * 1000, 0)}`, T.Z * 1000, "mΩ", 3),
+          step("RT", "Resistência do trafo", "R_T = Z_T/√(1 + (X/R)²)", `${n(T.Z * 1000, 3)}/√(1 + ${n(XR, 1)}²)`, T.R * 1000, "mΩ", 3),
+          step("XT", "Reatância do trafo", "X_T = R_T·(X/R)", `${n(T.R * 1000, 3)}·${n(XR, 1)}`, T.X * 1000, "mΩ", 3),
+          step("IccT", "Icc no secundário", "Icc = V/(√3·|Z_T|) = In/Z%", `${n(v.V, 0)}/(1,732·${n(T.Z * 1000, 3)})`, IccT / 1000, "kA"),
+        ];
         const lines = [
           `── TRANSFORMADOR ─────────────────────`,
           `In = ${(v.S * 1000).toFixed(0)}/(√3·${v.V}) = ${In.toFixed(1)} A`,
@@ -549,6 +594,12 @@ export const ELETRICA = {
           if (R20 === null) throw new Error(`Seção ${v.secao} mm² não tabelada para ${mat === "cu" ? "cobre" : "alumínio"} (use 1,5–300 mm²; Al ≥ 16)`);
           const Rc = (R20 * v.L / 1000) / np, Xc = (X_CABO_OHM_KM * v.L / 1000) / np;
           IccFim = iccTrifasica(v.V, T.R + Rc, T.X + Xc);
+          steps.push(
+            step("Rc", "Resistência do cabo", "R_C = R20·L/n", `${n(R20, 4)}·${n(v.L / 1000, 3)}/${np}`, Rc * 1000, "mΩ", 3),
+            step("Xc", "Reatância do cabo", "X_C = 0,08·L/n", `0,08·${n(v.L / 1000, 3)}/${np}`, Xc * 1000, "mΩ", 3),
+            step("Ztot", "Impedância total", "|Z| = √((R_T + R_C)² + (X_T + X_C)²)", `√(${n((T.R + Rc) * 1000, 3)}² + ${n((T.X + Xc) * 1000, 3)}²)`, Math.hypot(T.R + Rc, T.X + Xc) * 1000, "mΩ", 3),
+            step("IccFim", "Icc no fim do cabo", "Icc = V/(√3·|Z|)", `${n(v.V, 0)}/(1,732·${n(Math.hypot(T.R + Rc, T.X + Xc) * 1000, 3)})`, IccFim / 1000, "kA"),
+          );
           lines.push(
             `── CABO ${np > 1 ? np + "×" : ""}${v.secao} mm² ${mat === "cu" ? "Cu" : "Al"}, L = ${v.L} m ──`,
             `R_C = ${R20.toFixed(4)} Ω/km·${v.L} m${np > 1 ? "/" + np : ""} = ${(Rc * 1000).toFixed(3)} mΩ   X_C = ${(Xc * 1000).toFixed(3)} mΩ`,
@@ -563,7 +614,7 @@ export const ELETRICA = {
         );
         const IccLink = +(IccT / 1000).toFixed(2);
         return {
-          val: lines.join("\n"), unit: "", multi: true,
+          val: lines.join("\n"), unit: "", multi: true, steps,
           links: [{ label: `Verificar seção mínima do cabo para Icc = ${IccLink} kA`, area: "eletrica", calcId: "curto_circuito", values: { Icc: IccLink, t: 0.5 } }],
         };
       },
@@ -596,6 +647,11 @@ export const ELETRICA = {
         const d = escolherDisjuntor(v.Ib, v.Iz, fI2);
         const faixa: Record<string, [number, number]> = { B: [3, 5], C: [5, 10], D: [10, 20] };
         const [m1, m2] = faixa[v.curva ?? "C"]!;
+        const steps = d.In === null ? [] : [
+          step("In", "Disjuntor comercial", "menor In ≥ Ib", undefined, d.In, "A", 0),
+          step("I2", "Corrente convencional de atuação", `I2 = ${n(fI2)}·In`, `${n(fI2)}·${d.In}`, d.I2, "A", 1),
+          step("I2lim", "Limite do condutor", "1,45·Iz", `1,45·${n(v.Iz, 1)}`, 1.45 * v.Iz, "A", 1),
+        ];
         const lines = [
           `── CONDIÇÃO 1 · Ib ≤ In ≤ Iz ──────────`,
           d.In === null ? `✗ Ib > 1600 A — fora da faixa de disjuntores` : `In = ${d.In} A   (${v.Ib} ≤ ${d.In} ≤ ${v.Iz}) ${d.ok1 ? "✓" : "✗"}`,
@@ -609,7 +665,7 @@ export const ELETRICA = {
           `⚠ verifique também a capacidade de interrupção ≥ Icc no ponto`,
         );
         else lines.push(`✗ Nenhum In comercial fica entre Ib e Iz — aumente a seção do condutor (Iz) e refaça`);
-        return { val: lines.join("\n"), unit: "", multi: true };
+        return { val: lines.join("\n"), unit: "", multi: true, steps };
       },
       result: "disjuntor",
     },
@@ -632,6 +688,7 @@ export const ELETRICA = {
         { id: "V",   label: "V — tensão de linha", ph: "380", hint: "V" },
       ],
       example: { P: 100, fp1: 0.8, fp2: 0.92, V: 380 },
+      references: REFS_ELETRICA.fator_potencia,
       calc(v: any) {
         if (!(v.P > 0)) throw new Error("P deve ser > 0");
         if (!(v.fp1 > 0 && v.fp1 < 1)) throw new Error("FP atual deve estar entre 0 e 1");
@@ -642,6 +699,16 @@ export const ELETRICA = {
         const banco = BANCOS_KVAR.find((b) => b >= Qc - 1e-9) ?? null;
         const Q1 = v.P * Math.tan(Math.acos(v.fp1));
         const S1 = v.P / v.fp1;
+        const t1 = Math.tan(Math.acos(v.fp1)), t2 = Math.tan(Math.acos(v.fp2));
+        const steps = [
+          step("tan1", "tan φ1", "tan φ1 = tan(acos FP atual)", `tan(acos ${n(v.fp1)})`, t1, "", 4),
+          step("tan2", "tan φ2", "tan φ2 = tan(acos FP desejado)", `tan(acos ${n(v.fp2)})`, t2, "", 4),
+          step("Q1", "Reativa atual", "Q1 = P·tan φ1", `${n(v.P)}·${n(t1, 4)}`, Q1, "kvar"),
+          step("Qc", "Banco de capacitores", "Qc = P·(tan φ1 − tan φ2)", `${n(v.P)}·(${n(t1, 4)} − ${n(t2, 4)})`, Qc, "kvar"),
+          step("S1", "Potência aparente atual", "S1 = P/FP1", `${n(v.P)}/${n(v.fp1)}`, S1, "kVA"),
+          step("I1", "Corrente atual", "I1 = 1000·S1/(√3·V)", `1000·${n(S1)}/(1,732·${n(v.V, 0)})`, (S1 * 1000) / (SQRT3 * v.V), "A", 1),
+          step("S2", "Potência aparente com FP desejado", "S2 = P/FP2", `${n(v.P)}/${n(v.fp2)}`, v.P / v.fp2, "kVA"),
+        ];
         const lines = [
           `── SITUAÇÃO ATUAL ────────────────────`,
           `φ1 = acos(${v.fp1}) → tan φ1 = ${Math.tan(Math.acos(v.fp1)).toFixed(4)}   Q1 = ${Q1.toFixed(2)} kvar`,
@@ -661,7 +728,7 @@ export const ELETRICA = {
             `Nova corrente: ${((S2 * 1000) / (SQRT3 * v.V)).toFixed(1)} A (−${(100 * (1 - S2 / S1)).toFixed(1)} %)`,
           );
         } else lines.push(`Qc > 100 kvar — use banco automático em estágios (ex.: ${Math.ceil(Qc / 25)} × 25 kvar)`);
-        return { val: lines.join("\n"), unit: "", multi: true };
+        return { val: lines.join("\n"), unit: "", multi: true, steps };
       },
       result: "banco de capacitores",
     },
@@ -698,6 +765,12 @@ export const ELETRICA = {
         const PW = v.unidade === "kw" ? v.P * 1000 : v.P * CV_W;
         const In = correnteMotor(PW, v.V, v.eta, v.fp, sistema);
         const Ib = 1.25 * In;
+        const steps = [
+          step("PW", "Potência no eixo", v.unidade === "kw" ? "P = kW·1000" : "P = cv·735,5", v.unidade === "kw" ? `${n(v.P)}·1000` : `${n(v.P)}·735,5`, PW, "W", 1),
+          step("In", "Corrente nominal", `In = P/(${sistema === "tri" ? "√3·" : ""}V·η·cosφ)`, `${n(PW, 1)}/(${sistema === "tri" ? "1,732·" : ""}${n(v.V, 0)}·${n(v.eta)}·${n(v.fp)})`, In, "A"),
+          step("Ip", "Corrente de partida", "Ip = (Ip/In)·In", `${n(IpIn, 1)}·${n(In)}`, IpIn * In, "A", 1),
+          step("Ib", "Corrente de projeto do circuito", "Ib = 1,25·In", `1,25·${n(In)}`, Ib, "A"),
+        ];
         const lines = [
           `── POTÊNCIA ──────────────────────────`,
           `P = ${v.P} ${v.unidade === "kw" ? "kW" : "cv"} = ${PW.toFixed(1)} W (no eixo)`,
@@ -710,7 +783,7 @@ export const ELETRICA = {
           `→ disjuntor-motor ou curva D (Ip/In = ${IpIn}); considere partida estrela-triângulo/soft-starter acima de ~7,5 cv conforme concessionária`,
         ];
         return {
-          val: lines.join("\n"), unit: "", multi: true,
+          val: lines.join("\n"), unit: "", multi: true, steps,
           links: [{ label: `Escolher a seção do cabo (Ib = ${Ib.toFixed(1)} A)`, area: "eletrica", calcId: "secao_cabo", values: { modo: "corrente", Ib: +Ib.toFixed(2), sistema, V: v.V, fp: v.fp } }],
         };
       },

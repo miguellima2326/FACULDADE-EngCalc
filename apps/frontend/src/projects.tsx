@@ -1,6 +1,8 @@
 import React from "react";
 import { notifyIfExpired } from "./account.js";
 import { PrintCover, PrintSection, PrintDisclaimer, type SavedRun, type PrintItem } from "./worksheet.js";
+import { parseMaterials } from "@engcalc/core";
+import { CostTable, PrintCost, sumMaterials } from "./steps.js";
 
 /* ═══════════ Spec 007 — Projetos (obras) ═══════════ */
 
@@ -81,6 +83,7 @@ export function ProjectDetail({ view, responsible, onBack, onOpenItem }: {
   if (err) return <section className="sheet"><div className="report-err">⚠ {err}</div><div className="ws-actions"><button className="btn-secondary" onClick={onBack}>← Voltar</button></div></section>;
   if (!p) return <section className="sheet"><div className="hist-empty">Carregando projeto…</div></section>;
   const ro = p.readOnly;
+  const mats = sumMaterials(p.items.flatMap((it) => parseMaterials(it.report)));
   const guard = async (fn: () => Promise<unknown>) => { setErr(null); try { await fn(); load(); } catch (e) { setErr((e as Error).message); } };
 
   return <section className="sheet proj">
@@ -126,10 +129,13 @@ export function ProjectDetail({ view, responsible, onBack, onOpenItem }: {
       </span>
     </div>)}
 
+    {mats.length > 0 && <CostTable materials={mats} title="Materiais e custo da obra (soma dos cálculos salvos)" note="Soma das quantidades de todos os cálculos deste projeto que têm quantitativo (vigas, sapatas, pilares, lajes, cabos…). Sem perdas: acrescente 5 a 10 % na compra." />}
+
     {p.items.length > 0 && <div className="print-doc" aria-hidden="true">
       <PrintCover title={p.name} subtitle={[p.client, `${p.items.length} cálculo(s)`].filter(Boolean).join(" · ")} responsible={p.readOnly ? p.ownerName : responsible}
-        extra={<><ol className="pd-index">{p.items.map((it) => <li key={it.id}>{it.calcName}</li>)}</ol>{p.description && <p className="pd-note">{p.description}</p>}</>} />
+        extra={<><ol className="pd-index">{p.items.map((it) => <li key={it.id}>{it.calcName}</li>)}{mats.length > 0 && <li>Resumo de materiais e custo</li>}</ol>{p.description && <p className="pd-note">{p.description}</p>}</>} />
       {p.items.map((it, i) => <PrintSection key={it.id} index={i} item={{ title: it.calcName, areaKey: it.areaKey, inputs: it.inputs, report: it.report }} />)}
+      {mats.length > 0 && <PrintCost materials={mats} />}
       <PrintDisclaimer />
     </div>}
   </section>;

@@ -4,6 +4,8 @@
  * Os 7 cálculos originais (migrados de data.ts, mesmo comportamento) + eixo, parafuso e engrenagem.
  */
 
+import { step, n } from "./lib/steps.js";
+
 const fx = (x, d = 2) => Number(x).toFixed(d);
 const pos = (v, nome) => { if (!(v > 0)) throw new Error(`${nome} deve ser > 0`); };
 
@@ -108,7 +110,21 @@ const eixo = {
     const dCom = DIAM_EIXO.find((x) => x >= r.d - 1e-9) ?? Math.ceil(r.d);
     const ver = verificaEixo({ ...p, d: dCom });
     const escOk = ver.nEsc >= 1;
+    const steps = [
+      step("SeL", "Limite de fadiga do corpo de prova", "Se' = 0,5·Sut", `0,5·${m.Sut}`, r.SeLinha, "MPa", 1),
+      step("ka", "Fator de superfície", "ka = a·Sut^b", `${n(ac.a, 2)}·${m.Sut}^${n(ac.b, 3)}`, ka, "", 3),
+      step("kb", "Fator de tamanho (iterado com d)", r.d <= 51 ? "kb = 1,24·d^−0,107" : "kb = 1,51·d^−0,157", r.d <= 51 ? `1,24·${n(r.d)}^−0,107` : `1,51·${n(r.d)}^−0,157`, r.kb, "", 3),
+      step("Se", "Limite de fadiga corrigido", "Se = ka·kb·kc·kd·ke·Se'", `${n(ka, 3)}·${n(r.kb, 3)}·1·1·${n(ke, 3)}·${n(r.SeLinha, 1)}`, r.Se, "MPa", 1),
+      step("d", "Diâmetro mínimo (DE-ASME)", "d = [(16n/π)·√(4(Kf·M/Se)² + 3(Kfs·T/Sy)²)]^(1/3)", `[(16·${n(v.n, 1)}/π)·√(4(${n(v.Kf)}·${n(M, 0)}/${n(r.Se, 1)})² + 3(${n(v.Kfs)}·${n(T, 0)}/${m.Sy})²)]^(1/3)`, r.d, "mm"),
+      step("dCom", "Diâmetro comercial", "próximo diâmetro ≥ d", undefined, dCom, "mm", 0),
+      step("sigma", "Tensão de flexão alternada", "σa = 32·Kf·M/(π·d³)", `32·${n(v.Kf)}·${n(M, 0)}/(π·${dCom}³)`, ver.sigma, "MPa", 1),
+      step("tau", "Tensão de torção", "τm = 16·Kfs·T/(π·d³)", `16·${n(v.Kfs)}·${n(T, 0)}/(π·${dCom}³)`, ver.tau, "MPa", 1),
+      step("nFad", "Fator de segurança à fadiga", "n = 1/[(16/πd³)·√(4(Kf·M/Se)² + 3(Kfs·T/Sy)²)]", undefined, ver.nFad, "", 2),
+      step("vm", "Tensão de von Mises", "σ' = √(σa² + 3τm²)", `√(${n(ver.sigma, 1)}² + 3·${n(ver.tau, 1)}²)`, ver.vm, "MPa", 1),
+      step("nEsc", "Fator de segurança ao escoamento", "n = Sy/σ'", `${m.Sy}/${n(ver.vm, 1)}`, ver.nEsc, "", 2),
+    ];
     return {
+      steps,
       val: [
         `── MATERIAL ─────────────────────────`,
         `${m.label}: Sut = ${m.Sut} MPa   Sy = ${m.Sy} MPa`,
@@ -185,6 +201,12 @@ const parafuso = {
     const Fi = fr * Fp;             // N
     const T = (K * Fi * r.d) / 1000; // N·m
     const sigI = Fi / r.At;
+    const steps = [
+      step("Fp", "Carga de prova", "Fp = At·Sp", `${n(r.At, 1)}·${prop.Sp}/1000`, Fp / 1000, "kN"),
+      step("Fi", "Pré-carga", `Fi = ${n(fr)}·Fp`, `${n(fr)}·${n(Fp / 1000)}`, Fi / 1000, "kN"),
+      step("sigI", "Tensão na pré-carga", "σi = Fi/At", `${n(Fi, 0)}/${n(r.At, 1)}`, sigI, "MPa", 0),
+      step("T", "Torque de aperto", "T = K·Fi·d", `${n(K)}·${n(Fi / 1000)}·${r.d}`, T, "N·m", 1),
+    ];
     const lines = [
       `── ROSCA ────────────────────────────`,
       `${v.rosca} × ${r.p} — At = ${r.At} mm²   d = ${r.d} mm`,
@@ -206,7 +228,7 @@ const parafuso = {
       );
     }
     lines.push(`⚠ K é estimativa — confirme com o fabricante do fixador`);
-    return { val: lines.join("\n"), unit: "", multi: true };
+    return { val: lines.join("\n"), unit: "", multi: true, steps };
   },
   result: "parafuso",
 };
@@ -214,8 +236,8 @@ const parafuso = {
 /* ═══════════ M3 — Engrenagens cilíndricas de dentes retos ═══════════ */
 
 /** Módulos normalizados ISO 54 (mm). */
-const MODULOS_I = [1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 16, 20, 25, 32, 40, 50];
-const MODULOS_II = [1.125, 1.375, 1.75, 2.25, 2.75, 3.5, 4.5, 5.5, 7, 9, 11, 14, 18, 22, 28, 36, 45];
+export const MODULOS_I = [1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 16, 20, 25, 32, 40, 50];
+export const MODULOS_II = [1.125, 1.375, 1.75, 2.25, 2.75, 3.5, 4.5, 5.5, 7, 9, 11, 14, 18, 22, 28, 36, 45];
 
 /** Zmín sem interferência (pinhão × cremalheira, adendo = m): 2/sen²α. */
 export const zMinTeorico = (alphaDeg) => 2 / Math.sin((alphaDeg * Math.PI) / 180) ** 2;
@@ -257,6 +279,20 @@ const engrenagem = {
     const zt = zMinTeorico(alpha);
     const zMin = Math.ceil(zt - 0.15); // 20° → 17,1 ≈ 17 (valor usual); 14,5° → 32; 25° → 12
     const serie = MODULOS_I.includes(v.m) ? "série I" : MODULOS_II.includes(v.m) ? "série II" : null;
+    const steps = [
+      step("d1", "Diâmetro primitivo do pinhão", "d1 = m·Z1", `${n(v.m)}·${v.Z1}`, g.d1, "mm"),
+      step("d2", "Diâmetro primitivo da coroa", "d2 = m·Z2", `${n(v.m)}·${v.Z2}`, g.d2, "mm"),
+      step("da1", "Diâmetro de cabeça do pinhão", "da1 = d1 + 2m", `${n(g.d1)} + 2·${n(v.m)}`, g.da1, "mm"),
+      step("da2", "Diâmetro de cabeça da coroa", "da2 = d2 + 2m", `${n(g.d2)} + 2·${n(v.m)}`, g.da2, "mm"),
+      step("df1", "Diâmetro de pé do pinhão", "df1 = d1 − 2,5m", `${n(g.d1)} − 2,5·${n(v.m)}`, g.df1, "mm"),
+      step("df2", "Diâmetro de pé da coroa", "df2 = d2 − 2,5m", `${n(g.d2)} − 2,5·${n(v.m)}`, g.df2, "mm"),
+      step("db1", "Diâmetro de base do pinhão", "db1 = d1·cos α", `${n(g.d1)}·cos ${n(alpha, 1)}°`, g.db1, "mm"),
+      step("dist", "Distância entre centros", "a = m·(Z1 + Z2)/2", `${n(v.m)}·(${v.Z1} + ${v.Z2})/2`, g.dist, "mm"),
+      step("i", "Relação de transmissão", "i = Z2/Z1", `${v.Z2}/${v.Z1}`, g.i, "", 3),
+      step("p", "Passo", "p = π·m", `π·${n(v.m)}`, g.p, "mm", 3),
+      step("zt", "Nº mínimo de dentes", "Zmín = 2/sen²α", `2/sen²(${n(alpha, 1)}°)`, zt, ""),
+      ...(v.n1 > 0 ? [step("n2", "Rotação da coroa", "n2 = n1/i", `${n(v.n1, 0)}/${n(g.i, 3)}`, v.n1 / g.i, "rpm", 1)] : []),
+    ];
     const lines = [
       `── DADOS ────────────────────────────`,
       `m = ${v.m} mm   α = ${String(alpha).replace(".", ",")}°   Z1 = ${v.Z1}   Z2 = ${v.Z2}`,
@@ -277,7 +313,7 @@ const engrenagem = {
       `Zmín = 2/sen²α = ${fx(zt, 2)} → ${zMin} dentes`,
       v.Z1 >= zMin ? `✓ Z1 = ${v.Z1} ≥ ${zMin} — sem interferência` : `⚠ Z1 = ${v.Z1} < ${zMin} — haverá rebaixo: aumente Z1 ou use correção de perfil (x > 0)`,
     );
-    return { val: lines.join("\n"), unit: "", multi: true };
+    return { val: lines.join("\n"), unit: "", multi: true, steps };
   },
   result: "engrenagem",
 };
@@ -327,7 +363,8 @@ const originais = [
     example: { vc: 80, d: 50 },
     calc(v) {
       if (v.d <= 0) throw new Error("Diâmetro deve ser maior que zero");
-      return { val: ((1000 * v.vc) / (Math.PI * v.d)).toFixed(1), unit: "rpm" };
+      const r = (1000 * v.vc) / (Math.PI * v.d);
+      return { val: r.toFixed(1), unit: "rpm", steps: [step("rpm", "Rotação", "n = 1000·Vc/(π·D)", `1000·${n(v.vc, 1)}/(π·${n(v.d, 1)})`, r, "rpm", 1)] };
     },
     result: "RPM",
   },
@@ -354,7 +391,7 @@ const originais = [
       if (bestFrac[0] === bestFrac[1]) { whole += 1; bestFrac = [0, 64]; }
       const fracPart = bestFrac[0] === 0 ? "" : `${bestFrac[0]}/${bestFrac[1]}`;
       const fracStr = frac < 0.001 ? "" : ` (≈ ${[whole > 0 || !fracPart ? whole : "", fracPart].filter(Boolean).join(" ")}")`;
-      return { val: inches.toFixed(4) + " in" + fracStr, unit: "" };
+      return { val: inches.toFixed(4) + " in" + fracStr, unit: "", steps: [step("in", "Polegadas", "pol = mm/25,4", `${n(v.mm, 2)}/25,4`, inches, "in", 4)] };
     },
     result: "polegadas",
   },
@@ -373,7 +410,8 @@ const originais = [
     example: { d1: 100, n1: 1750, d2: 250 },
     calc(v) {
       if (v.d2 <= 0) throw new Error("D2 deve ser > 0");
-      return { val: ((v.d1 * v.n1) / v.d2).toFixed(1), unit: "rpm" };
+      const r = (v.d1 * v.n1) / v.d2;
+      return { val: r.toFixed(1), unit: "rpm", steps: [step("n2", "Rotação da polia movida", "N2 = D1·N1/D2", `${n(v.d1, 1)}·${n(v.n1, 0)}/${n(v.d2, 1)}`, r, "rpm", 1)] };
     },
     result: "N2",
   },
@@ -390,7 +428,7 @@ const originais = [
     ],
     example: { p: 4, e: 2 },
     calc(v) {
-      return { val: (v.p * v.e).toFixed(3), unit: "mm/volta" };
+      return { val: (v.p * v.e).toFixed(3), unit: "mm/volta", steps: [step("avanco", "Avanço", "Avanço = passo·entradas", `${n(v.p, 3)}·${n(v.e, 0)}`, v.p * v.e, "mm/volta", 3)] };
     },
     result: "avanço",
   },
@@ -409,9 +447,14 @@ const originais = [
     example: { d1c: 60, d2c: 40, lc: 100 },
     calc(v) {
       if (v.lc <= 0) throw new Error("Comprimento L deve ser > 0");
+      const r = Math.atan((v.d1c - v.d2c) / (2 * v.lc)) * (180 / Math.PI);
       return {
-        val: (Math.atan((v.d1c - v.d2c) / (2 * v.lc)) * (180 / Math.PI)).toFixed(4),
+        val: r.toFixed(4),
         unit: "°",
+        steps: [
+          step("tg", "Tangente do ângulo", "tg α = (D1 − D2)/(2·L)", `(${n(v.d1c, 1)} − ${n(v.d2c, 1)})/(2·${n(v.lc, 1)})`, (v.d1c - v.d2c) / (2 * v.lc), "", 5),
+          step("alpha", "Ângulo", "α = arctan(tg α)", undefined, r, "°", 4),
+        ],
       };
     },
     result: "ângulo α",
@@ -430,7 +473,7 @@ const originais = [
     example: { f: 5000, a: 100 },
     calc(v) {
       if (v.a <= 0) throw new Error("Área deve ser > 0");
-      return { val: (v.f / v.a).toFixed(3), unit: "MPa" };
+      return { val: (v.f / v.a).toFixed(3), unit: "MPa", steps: [step("sigma", "Tensão normal", "σ = F/A", `${n(v.f, 1)}/${n(v.a, 2)}`, v.f / v.a, "MPa", 3)] };
     },
     result: "σ (tensão)",
   },
@@ -448,7 +491,15 @@ const originais = [
     example: { t: 50, n: 1450 },
     calc(v) {
       const P = v.t * 2 * Math.PI * v.n / 60;
-      return { val: `${P.toFixed(2)} W  =  ${(P / 1000).toFixed(3)} kW  =  ${(P / 735.5).toFixed(2)} cv`, unit: "" };
+      const w = (2 * Math.PI * v.n) / 60;
+      return {
+        val: `${P.toFixed(2)} W  =  ${(P / 1000).toFixed(3)} kW  =  ${(P / 735.5).toFixed(2)} cv`, unit: "",
+        steps: [
+          step("w", "Velocidade angular", "ω = 2π·n/60", `2π·${n(v.n, 0)}/60`, w, "rad/s", 3),
+          step("P", "Potência", "P = T·ω", `${n(v.t)}·${n(w, 3)}`, P, "W"),
+          step("Pcv", "Potência em cv", "P(cv) = P/735,5", `${n(P)}/735,5`, P / 735.5, "cv"),
+        ],
+      };
     },
     result: "potência P",
   },
@@ -466,7 +517,8 @@ const originais = [
     ],
     example: { al: 12, l0: 1000, dt: 80 },
     calc(v) {
-      return { val: ((v.al * 1e-6) * v.l0 * v.dt).toFixed(4), unit: "mm" };
+      const r = (v.al * 1e-6) * v.l0 * v.dt;
+      return { val: r.toFixed(4), unit: "mm", steps: [step("dL", "Dilatação", "ΔL = α·L₀·ΔT", `${n(v.al, 1)}·10⁻⁶·${n(v.l0, 1)}·${n(v.dt, 1)}`, r, "mm", 4)] };
     },
     result: "ΔL",
   },
