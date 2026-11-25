@@ -1,12 +1,27 @@
 import { DATA, ICONS, CABLE_CATALOG } from "./data.js";
 
+import type { Step, Material, Reference } from "./lib/steps.js";
+
 export { DATA, ICONS, CABLE_CATALOG };
+export { stepsText, parseMaterials, n as fmtBR, type Step, type Material, type Reference } from "./lib/steps.js";
+/* Tabelas de consulta (tela "Tabelas") */
+export { BARRAS, TAB_17_3 } from "./lib/concreto.js";
+export { izTabela, resistenciaCondutor, SECOES_IZ, K_ADIABATICO, METODOS, SECAO_MIN_AL } from "./lib/nbr5410.js";
+export { ancoragem } from "./civil.js";
+export { DISJUNTORES_IN, BANCOS_KVAR } from "./eletrica.js";
+export { ROSCAS, MODULOS_I, MODULOS_II, MATERIAIS_EIXO, propriedadesClasse } from "./mecanica.js";
 
 export interface EngineResult {
   val: string;
   unit?: string;
   multi?: boolean;
+  links?: Array<{ label: string; area: string; calcId: string; values: Record<string, number | string> }>;
+  /** passo a passo: fórmula, números substituídos e resultado de cada conta */
+  steps?: Step[];
+  /** quantitativo de materiais para orçamento */
+  materials?: Material[];
 }
+export type { Reference as CalcReference };
 
 export type RawValues = Record<string, number | string | null | undefined>;
 
