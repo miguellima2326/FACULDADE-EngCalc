@@ -1,5 +1,7 @@
 import React from "react";
 import { notifyIfExpired } from "./account.js";
+import { stepsText, type CalcReference } from "@engcalc/core";
+import { StepsBlock, ReferenceBar, CompareBlock, CostTable, type Snapshot } from "./steps.js";
 
 /* ═══════════════════════════════════════════════════════════════
    Folha de cálculo — specs 004 (PDF), 005 (UX da folha), 006 (links)
@@ -23,6 +25,8 @@ export function scrollToEl(el: HTMLElement | null) {
 }
 
 const fmtNum = (n: number) => (Math.abs(n) >= 1000 || Number.isInteger(n) ? String(Number(n.toFixed(4))) : String(Number(n.toPrecision(6))));
+const withSteps = (report: string, steps?: any[]) => (steps?.length ? `${report}\n${stepsText(steps)}` : report);
+const snapshot = (r: any): Snapshot => ({ inputs: r.inputs ?? [], steps: r.steps ?? [], value: r.multi ? r.value : `${r.value} ${r.unit || ""}`, multi: !!r.multi });
 const formulas = (f: string) => String(f || "").split(" | ").map((s) => s.trim()).filter(Boolean);
 const AREA_LABEL: Record<string, string> = { mecanica: "Mecânica", civil: "Civil", eletrica: "Elétrica" };
 
@@ -39,22 +43,28 @@ export function Worksheet({ calc, areaKey, preset, responsible, onSaved, onOpenL
   const [result, setResult] = React.useState<any>(null);
   const [lastRun, setLastRun] = React.useState<SavedRun | null>(null);
   const [busy, setBusy] = React.useState(false);
+  const [activeRef, setActiveRef] = React.useState<CalcReference | null>(null);
+  const [pinned, setPinned] = React.useState<Snapshot | null>(null);
 
   React.useEffect(() => { scrollToEl(sheetRef.current); }, []);
   React.useEffect(() => { if (result) scrollToEl(resultRef.current); }, [result]);
 
   const selected = (id: string) => values[id] ?? calc.fields.find((f: any) => f.id === id)?.options?.[0]?.value ?? "";
   const visible = (field: any) => !field.dependsOn || field.dependsOn.in.includes(selected(field.dependsOn.id));
-  const update = (id: string, value: string) => setValues((cur) => ({ ...cur, [id]: value }));
+  const update = (id: string, value: string) => { setValues((cur) => ({ ...cur, [id]: value })); setActiveRef(null); };
+  const loadRef = (ref: CalcReference) => {
+    setValues(Object.fromEntries(Object.entries(ref.values).map(([k, v]) => [k, String(v)])));
+    setUnits({}); setResult(null); setActiveRef(ref);
+  };
   const unitOf = (field: any) => field.units?.[units[field.id] ?? 0];
 
   const loadExample = () => {
     const ex = calc.example ?? {};
     const next: Record<string, string> = {};
     for (const f of calc.fields) if (ex[f.id] !== undefined && ex[f.id] !== null) next[f.id] = String(ex[f.id]);
-    setValues(next); setUnits({}); setResult(null);
+    setValues(next); setUnits({}); setResult(null); setActiveRef(null);
   };
-  const clear = () => { setValues({}); setUnits({}); setResult(null); };
+  const clear = () => { setValues({}); setUnits({}); setResult(null); setActiveRef(null); };
 
   const run = async () => {
     setBusy(true);
@@ -83,7 +93,7 @@ export function Worksheet({ calc, areaKey, preset, responsible, onSaved, onOpenL
       if (!response.ok) throw new Error(body.error || "Erro no cálculo");
       const conv = summary.length ? ["── CONVERSÃO DE UNIDADES ─────────────", ...summary].join("\n") + "\n" : "";
       const value = body.result.multi ? conv + body.result.value : body.result.value;
-      setResult({ ...body.result, value, conversions: summary });
+      setResult({ ...body.result, value, conversions: summary, inputs: inputRows });
       const firstLine = String(body.result.value).split("\n").find((l: string) => l.trim() && !l.startsWith("──"))?.trim() ?? "";
       const run: SavedRun = {
         areaKey, calcId: calc.id, calcName: calc.name,
@@ -91,7 +101,7 @@ export function Worksheet({ calc, areaKey, preset, responsible, onSaved, onOpenL
         resultStr: (body.result.multi ? firstLine : `${body.result.value} ${body.result.unit || ""}`).slice(0, 40),
         vals: values,
         inputs: inputRows,
-        report: body.result.multi ? value : `${calc.result}: ${body.result.value} ${body.result.unit || ""}`,
+        report: withSteps(body.result.multi ? value : `${calc.result}: ${body.result.value} ${body.result.unit || ""}`, body.result.steps),
       };
       setLastRun(run);
       onSaved(run);
@@ -119,7 +129,8 @@ export function Worksheet({ calc, areaKey, preset, responsible, onSaved, onOpenL
       {calc.example && <button type="button" onClick={loadExample}>carregar exemplo</button>}
       <button type="button" onClick={clear}>limpar</button>
     </span>}>
-      <div>{calc.fields.map((field: any) => <div className="field-row" key={field.id} style={{ display: visible(field) ? "" : "none" }}>
+      {calc.references?.length > 0 && <ReferenceBar refs={calc.references} active={activeRef} onLoad={loadRef} />}
+      <div>{calc.fields.map((field: any) => <div className={field.type === "select" ? "field-row has-select" : "field-row"} key={field.id} style={{ display: visible(field) ? "" : "none" }}>
         <label className="field-label" htmlFor={`in-${field.id}`}>{field.label}{field.optional && <span className="field-opt"> (opcional)</span>}</label>
         <div className="field-input-wrap">
           {field.type === "select"
@@ -138,16 +149,20 @@ export function Worksheet({ calc, areaKey, preset, responsible, onSaved, onOpenL
         : result.multi ? <Report value={result.value} />
         : <div className="result-single"><span className="result-tag">{calc.result}</span><span className="result-value">{result.value}</span><span className="result-unit">{result.unit}</span></div>}
       {!result.error && <div className="result-actions">
-        <button className="btn-copy-report" onClick={() => navigator.clipboard?.writeText(result.multi ? result.value : `${result.value} ${result.unit || ""}`)}>copiar</button>
+        <button className="btn-copy-report" onClick={() => navigator.clipboard?.writeText(withSteps(result.multi ? result.value : `${result.value} ${result.unit || ""}`, result.steps))}>copiar</button>
         <button className="btn-copy-report" onClick={() => window.print()}>gerar PDF</button>
         {onSaveToProject && lastRun && <button className="btn-copy-report" onClick={() => onSaveToProject(lastRun)}>salvar no projeto</button>}
+        <button className="btn-copy-report" title="Guarda este resultado como A. Mude os dados e calcule de novo para comparar." onClick={() => setPinned(snapshot(result))}>{pinned ? "fixar este como A" : "comparar alternativa"}</button>
       </div>}
       {!result.error && result.links?.length > 0 && <div className="result-links">
         <div className="ws-block-label">Próximo passo</div>
         {result.links.map((l: CalcLink, i: number) => <button key={i} className="btn-link" onClick={() => onOpenLink(l, calc.name)}>→ {l.label}</button>)}
       </div>}
+      {!result.error && result.steps?.length > 0 && <StepsBlock steps={result.steps} reference={activeRef} />}
+      {!result.error && pinned && <CompareBlock a={pinned} b={snapshot(result)} onClear={() => setPinned(null)} />}
+      {!result.error && result.materials?.length > 0 && <CostTable materials={result.materials} />}
     </div>}
-    {result && !result.error && <PrintDoc calc={calc} areaKey={areaKey} inputs={inputRows} report={result.multi ? result.value : `${calc.result}: ${result.value} ${result.unit || ""}`} responsible={responsible} />}
+    {result && !result.error && <PrintDoc calc={calc} areaKey={areaKey} inputs={inputRows} report={withSteps(result.multi ? result.value : `${calc.result}: ${result.value} ${result.unit || ""}`, result.steps)} responsible={responsible} />}
   </div>;
 }
 

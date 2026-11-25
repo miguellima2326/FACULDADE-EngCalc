@@ -11,6 +11,8 @@ import {
 import {
   vazaoCircular, laminaParaVazao, laminaRetangular, vazaoRetangular, kirpich,
 } from "./lib/hidraulica.js";
+import { step, n, materialsText, KG_POR_CM2_M } from "./lib/steps.js";
+import { REFS_CIVIL } from "./referencias.js";
 
 const fx = (x, d = 2) => Number(x).toFixed(d);
 
@@ -83,6 +85,7 @@ const vigaCA = {
     { id: "Mdinf", label: "Md informado (opcional — substitui fd·L²/8)", ph: "", hint: "kN·m", optional: true, units: U_KNM },
   ],
   example: { L: 6, bw: 25, h: 60, cob: 3, fck: 25, fyk: 500, gk: 20, qk: 15 },
+  references: REFS_CIVIL.concreto,
   calc(v) {
     pos(v.L, "Vão L"); pos(v.bw, "bw"); pos(v.h, "h"); pos(v.cob, "Cobrimento");
     if (v.gk < 0 || v.qk < 0) throw new Error("Cargas não podem ser negativas");
@@ -127,7 +130,39 @@ const vigaCA = {
       return { phi, s: Math.min(s, Math.floor(sMax)) };
     }).filter((e) => e.s >= 7).slice(0, 2);
 
+    const cmd = Md * 100;                                // kN·cm
+    const steps = [
+      step("fd", "Carga de cálculo", "fd = 1,4·(gk + qk)", `1,4·(${n(v.gk)} + ${n(v.qk)})`, fd, "kN/m"),
+      MdInf ? step("Md", "Momento de cálculo (informado)", "Md", undefined, Md, "kN·m")
+            : step("Md", "Momento de cálculo", "Md = fd·L²/8", `${n(fd)}·${n(v.L)}²/8`, Md, "kN·m"),
+      step("d", "Altura útil", "d = h − c − φt − φl/2", `${n(v.h, 1)} − ${n(v.cob)} − 0,63 − 1,00`, d, "cm"),
+      step("fcd", "Resistência de cálculo do concreto", "fcd = fck/1,4", `${n(v.fck, 0)}/1,4`, fcd, "MPa"),
+      step("fyd", "Resistência de cálculo do aço", "fyd = fyk/1,15", `${n(v.fyk, 0)}/1,15`, fyd, "MPa"),
+      step("Kmd", "Coeficiente adimensional", "Kmd = Md/(bw·d²·fcd)", `${n(cmd, 0)}/(${n(v.bw, 1)}·${n(d)}²·${n(fcd / 10, 4)})`, Kmd, "", 4),
+      step("bx", "Posição relativa da linha neutra", "βx = (0,68 − √(0,4624 − 1,088·Kmd))/0,544", `(0,68 − √(0,4624 − 1,088·${n(Kmd, 4)}))/0,544`, bx, "", 4),
+      step("x", "Linha neutra", "x = βx·d", `${n(bx, 4)}·${n(d)}`, bx * d, "cm"),
+      step("z", "Braço de alavanca", "z = d·(1 − 0,4·βx)", `${n(d)}·(1 − 0,4·${n(bx, 4)})`, z, "cm"),
+      step("As", "Armadura de flexão", "As = Md/(z·fyd)", `${n(cmd, 0)}/(${n(z)}·${n(fyd / 10, 3)})`, As, "cm²"),
+      step("AsMin", "Armadura mínima", "As,mín = ρmín·bw·h", `${n(rhoMin * 100, 3)}%·${n(v.bw, 1)}·${n(v.h, 1)}`, AsMin, "cm²"),
+      step("Vsd", "Cortante de cálculo no apoio", "Vsd = fd·L/2", `${n(fd)}·${n(v.L)}/2`, Vsd, "kN"),
+      step("Vrd2", "Resistência da biela comprimida", "VRd2 = 0,27·αv2·fcd·bw·d", `0,27·${n(av2, 2)}·${n(fcd / 10, 4)}·${n(v.bw, 1)}·${n(d)}`, Vrd2, "kN", 1),
+      step("fctd", "Resistência de cálculo à tração", "fctd = 0,7·0,3·fck^(2/3)/1,4", `0,7·0,3·${n(v.fck, 0)}^(2/3)/1,4`, fctd, "MPa", 3),
+      step("Vc", "Parcela do concreto", "Vc = 0,6·fctd·bw·d", `0,6·${n(fctd / 10, 4)}·${n(v.bw, 1)}·${n(d)}`, Vc, "kN", 1),
+      step("Vsw", "Parcela dos estribos", "Vsw = Vsd − Vc", `${n(Vsd)} − ${n(Vc)}`, Vsw, "kN", 1),
+      step("AswS", "Estribos calculados", "Asw/s = Vsw/(0,9·d·fywd)", `${n(Vsw)}/(0,9·${n(d)}·${n(fywd / 10, 3)})·100`, AswS, "cm²/m"),
+      step("AswMin", "Estribos mínimos", "Asw,mín/s = 0,2·fct,m/fywk·bw", `0,2·${n(fctm(v.fck), 3)}/${fywk}·${n(v.bw, 1)}·100`, AswMin, "cm²/m"),
+    ];
+    // Quantitativo: concreto, forma (fundo + 2 laterais) e aço (longitudinal + estribos de 2 ramos)
+    const perimEstribo = (2 * (v.bw - 2 * v.cob) + 2 * (v.h - 2 * v.cob)) / 100;   // m
+    const kgLong = AsAdot * v.L * KG_POR_CM2_M;
+    const kgEstr = (AswAdot / 2) * perimEstribo * v.L * KG_POR_CM2_M;
+    const materials = [
+      { key: "concreto", label: `Concreto C${v.fck}`, qty: (v.bw / 100) * (v.h / 100) * v.L, unit: "m³" },
+      { key: "forma", label: "Forma", qty: ((2 * v.h + v.bw) / 100) * v.L, unit: "m²" },
+      { key: "aco", label: `Aço CA-${v.fyk / 10}`, qty: kgLong + kgEstr, unit: "kg" },
+    ];
     return {
+      steps, materials,
       val: [
         `── ESFORÇOS ──────────────────────────`,
         `fd = 1,4·${v.gk} + 1,4·${v.qk} = ${fx(fd)} kN/m`,
@@ -155,6 +190,7 @@ const vigaCA = {
           ? `Estribos (2 ramos): ${estribos.map((e) => `φ${e.phi} c/ ${e.s} cm`).join(" | ")}`
           : `⚠ estribos muito densos — aumente a seção`,
         `⚠ ELS (flecha e fissuração) não verificados aqui → use "Flecha de viga CA"`,
+        ...materialsText(materials, `aço longitudinal ${fx(kgLong, 1)} kg + estribos ${fx(kgEstr, 1)} kg; sem perdas`),
       ].join("\n"),
       unit: "", multi: true,
       links: MdInf ? [] : [{
@@ -239,7 +275,32 @@ const sapata = {
     const tauRd2 = 0.27 * alphaV2(v.fck) * fcd;
     const bielaOk = tauSd <= tauRd2;
 
+    const steps = [
+      step("N", "Carga no solo (serviço + peso próprio)", "N = 1,05·Nk", `1,05·${n(v.Nk, 1)}`, N, "kN", 1),
+      step("area", "Área necessária", "A·B = N/σadm", `${n(N, 1)}/${n(v.sigAd, 1)}`, area, "m²", 3),
+      step("B", "Lado B (balanços iguais: A − B = a − b)", "B = [−(a − b) + √((a − b)² + 4·A·B)]/2, múltiplo de 5 cm", `[−${n(dif)} + √(${n(dif)}² + 4·${n(area, 3)})]/2`, B, "m"),
+      step("A", "Lado A", "A = B + (a − b), ampliado até σmáx ≤ σadm", undefined, A, "m"),
+      step("e", "Excentricidade", "e = Mk/N", `${n(v.Mk)}/${n(N, 1)}`, p.e, "m", 3),
+      step("sigMax", "Pressão máxima no solo", p.triangular ? "σmáx = 2N/(3B·(A/2 − e))" : "σmáx = N/(A·B)·(1 + 6e/A)", p.triangular ? undefined : `${n(N, 1)}/(${n(A)}·${n(B)})·(1 + 6·${n(p.e, 3)}/${n(A)})`, p.sigMax, "kPa"),
+      step("hMin", "Altura mínima (sapata rígida)", "h ≥ (A − a)/3", `(${n(A)} − ${n(a)})/3`, (A - a) / 3, "m", 3),
+      step("h", "Altura adotada", "h", undefined, h, "m"),
+      step("Nd", "Carga de cálculo", "Nd = 1,4·Nk", `1,4·${n(v.Nk, 1)}`, Nd, "kN", 1),
+      step("x1A", "Distância à seção S1 (dir. A)", "x₁ = (A − a)/2 + 0,15·a", `(${n(A)} − ${n(a)})/2 + 0,15·${n(a)}`, x1A, "m", 3),
+      step("M1A", "Momento na seção S1 (dir. A)", "M1d = σd,máx·B·x₁²/2", `${n(pd.sigMax)}·${n(B)}·${n(x1A, 3)}²/2`, M1A, "kN·m"),
+      step("AsA", "Armadura paralela a A", "As = M1d/(0,85·d·fyd)", `${n(M1A * 100, 0)}/(0,85·${n(dA, 1)}·${n(fyd / 10, 3)})`, AsA, "cm²"),
+      step("M1B", "Momento na seção S1 (dir. B)", "M1d = σd,méd·A·x₁²/2", `${n(sigMed)}·${n(A)}·${n(x1B, 3)}²/2`, M1B, "kN·m"),
+      step("AsB", "Armadura paralela a B", "As = M1d/(0,85·d·fyd)", `${n(M1B * 100, 0)}/(0,85·${n(dB, 1)}·${n(fyd / 10, 3)})`, AsB, "cm²"),
+      step("tauSd", "Tensão na biela (contorno do pilar)", "τsd = Nd/(u₀·d)", `${n(Nd * 1e3, 0)}/(${n(u0, 0)}·${n(dMed * 10, 0)})`, tauSd, "MPa", 3),
+      step("tauRd2", "Resistência da biela", "τRd2 = 0,27·αv2·fcd", `0,27·${n(alphaV2(v.fck), 2)}·${n(fcd)}`, tauRd2, "MPa", 3),
+    ];
+    const materials = [
+      { key: "concreto", label: `Concreto C${v.fck}`, qty: A * B * h, unit: "m³" },
+      { key: "forma", label: "Forma", qty: 2 * (A + B) * h, unit: "m²" },
+      { key: "aco", label: `Aço CA-${v.fyk / 10}`, qty: (AsAf * A + AsBf * B) * KG_POR_CM2_M, unit: "kg" },
+    ];
+
     return {
+      steps, materials,
       val: [
         `── GEOMETRIA ────────────────────────`,
         `N serviço + pp: 1,05·Nk = ${fx(N, 1)} kN`,
@@ -264,6 +325,7 @@ const sapata = {
         `τsd = Nd/(u₀·d) = ${fx(tauSd, 3)} MPa   τRd2 = ${fx(tauRd2, 3)} MPa`,
         bielaOk ? `✓ τsd ≤ τRd2 — OK (sapata rígida dispensa punção por tração)` : `✗ τsd > τRd2 — aumentar h ou a seção do pilar`,
         `⚠ σmáx ≤ σadm adotado de forma conservadora; confira o acréscimo admitido pela NBR 6122 para ações de vento`,
+        ...materialsText(materials, "sapata como bloco retangular A×B×h; sem perdas"),
       ].join("\n"),
       unit: "", multi: true,
     };
@@ -341,6 +403,29 @@ const pilar = {
       return `${n}φ${b.phi} (${fx(n * b.area)} cm²)`;
     }).slice(0, 3).join(" | ");
 
+    const steps = [
+      step("le", "Comprimento de flambagem", "le = β·lc", `${n(v.beta)}·${n(v.lc)}`, le, "m"),
+      step("nu", "Força normal adimensional", "ν = Nd/(Ac·fcd)", `${n(Nd, 1)}/(${n(Ac, 0)}·${n(fcd / 10, 4)})`, nu, "", 3),
+      ...[dh, db].flatMap((d) => [
+        step(`lambda_${d.nome}`, `Esbeltez (dir. ${d.nome})`, `λ = le·√12/${d.nome}`, `${n(le)}·3,464/${n(d.hDir / 100)}`, d.lambda, "", 1),
+        step(`Mmin_${d.nome}`, `Momento mínimo (dir. ${d.nome})`, `M1d,mín = Nd·(0,015 + 0,03·${d.nome})`, `${n(Nd, 1)}·(0,015 + 0,03·${n(d.hDir / 100)})`, d.Mmin, "kN·m"),
+        step(`lambda1_${d.nome}`, `Esbeltez limite (dir. ${d.nome})`, "λ1 = 25 + 12,5·e1/h  (35 ≤ λ1 ≤ 90)", `25 + 12,5·${n(d.M1d / Nd, 4)}/${n(d.hDir / 100)}`, d.lambda1, "", 1),
+        ...(d.M2 > 0 ? [
+          step(`invR_${d.nome}`, `Curvatura (dir. ${d.nome})`, "1/r = 0,005/(h·(ν + 0,5))", `0,005/(${n(d.hDir / 100)}·(${n(nu, 3)} + 0,5))`, d.invR, "1/m", 5),
+          step(`M2_${d.nome}`, `Momento de 2ª ordem (dir. ${d.nome})`, "M2d = Nd·le²/10·(1/r)", `${n(Nd, 1)}·${n(le)}²/10·${n(d.invR, 5)}`, d.M2, "kN·m"),
+        ] : []),
+        step(`Mtot_${d.nome}`, `Momento total (dir. ${d.nome})`, "Md,tot = M1d + M2d", `${n(d.M1d)} + ${n(d.M2)}`, d.Mtot, "kN·m"),
+        step(`As_${d.nome}`, `Armadura necessária (dir. ${d.nome})`, "As por equilíbrio da seção (flexo-compressão)", undefined, d.As, "cm²"),
+      ]),
+      step("AsMin", "Armadura mínima", "As,mín = máx(0,15·Nd/fyd; 0,4%·Ac)", `máx(0,15·${n(Nd, 1)}/${n(fyd / 10, 3)}; 0,004·${n(Ac, 0)})`, AsMin, "cm²"),
+      step("As", "Armadura adotada", "As = máx(As,crit; As,mín)", `máx(${n(crit.As)}; ${n(AsMin)})`, As, "cm²"),
+    ];
+    const materials = [
+      { key: "concreto", label: `Concreto C${v.fck}`, qty: (Ac / 1e4) * v.lc, unit: "m³" },
+      { key: "forma", label: "Forma", qty: (2 * (v.bP + v.hP) / 100) * v.lc, unit: "m²" },
+      { key: "aco", label: `Aço CA-${v.fyk / 10}`, qty: As * v.lc * KG_POR_CM2_M, unit: "kg" },
+    ];
+
     const linhaDir = (d) => [
       `── DIREÇÃO ${d.nome.toUpperCase()} (${d.hDir} cm) ──────────────────`,
       `λ = le·√12/${d.nome} = ${fx(d.lambda, 1)}   λ1 = ${fx(d.lambda1, 1)}  ${d.lambda <= d.lambda1 ? "(dispensa 2ª ordem)" : "(considera 2ª ordem)"}`,
@@ -363,8 +448,9 @@ const pilar = {
         As <= AsMax ? `✓ As ≤ 4%·Ac = ${fx(AsMax)} cm² (8% só na região de emenda)` : `✗ As > 4%·Ac — aumentar seção`,
         `Sugestões (φ ≤ b/8): ${sug}`,
         `⚠ flexão oblíqua não combinada; αb = 1 adotado`,
+        ...materialsText(materials, "aço só longitudinal, sem estribos e sem perdas"),
       ].join("\n"),
-      unit: "", multi: true,
+      unit: "", multi: true, steps, materials,
       links: [{
         label: "Dimensionar a sapata deste pilar", area: "civil", calcId: "fundacao",
         values: { Nk: Number(fx(v.Nd / 1.4, 1)), Mk: 0, ap: v.hP, bp: v.bP, sigAd: 200, fck: 25, fyk: 500, cobs: 5 },
@@ -398,7 +484,18 @@ const vigaContinua = {
     const r = vigaContinua2Vaos(v.L1, v.q1, v.L2, v.q2, v.EI);
     const lim = (L, d) => `[L/250 = ${fx((L * 1000) / 250, 1)} ${d <= (L * 1000) / 250 ? "✓" : "✗"} | L/500 = ${fx((L * 1000) / 500, 1)} ${d <= (L * 1000) / 500 ? "✓" : "✗"}]`;
     const d1 = r.f1.d * 1000, d2 = r.f2.d * 1000;
+    const steps = [
+      step("MB", "Momento no apoio central (3 momentos)", "M_B = −(q₁L₁³ + q₂L₂³)/(8·(L₁ + L₂))", `−(${n(v.q1)}·${n(v.L1)}³ + ${n(v.q2)}·${n(v.L2)}³)/(8·(${n(v.L1)} + ${n(v.L2)}))`, r.MB, "kN·m"),
+      step("RA", "Reação em A", "R_A = q₁L₁/2 + M_B/L₁", `${n(v.q1)}·${n(v.L1)}/2 + (${n(r.MB)})/${n(v.L1)}`, r.RA, "kN"),
+      step("RC", "Reação em C", "R_C = q₂L₂/2 + M_B/L₂", `${n(v.q2)}·${n(v.L2)}/2 + (${n(r.MB)})/${n(v.L2)}`, r.RC, "kN"),
+      step("RB", "Reação em B", "R_B = q₁L₁ + q₂L₂ − R_A − R_C", `${n(v.q1 * v.L1)} + ${n(v.q2 * v.L2)} − ${n(r.RA)} − ${n(r.RC)}`, r.RB, "kN"),
+      step("M1", "Momento positivo máx. (vão 1)", "M⁺ = R_A²/(2q₁)", `${n(r.RA)}²/(2·${n(v.q1)})`, r.M1, "kN·m"),
+      step("M2", "Momento positivo máx. (vão 2)", "M⁺ = R_C²/(2q₂)", `${n(r.RC)}²/(2·${n(v.q2)})`, r.M2, "kN·m"),
+      step("d1", "Flecha máxima (vão 1)", "δ máx por superposição (q + M_B)", undefined, d1, "mm"),
+      step("d2", "Flecha máxima (vão 2)", "δ máx por superposição (q + M_B)", undefined, d2, "mm"),
+    ];
     return {
+      steps,
       val: [
         `── MOMENTOS (kN·m) ──────────────────`,
         `M_A = 0 (articulado)   M_C = 0 (articulado)`,
@@ -472,30 +569,38 @@ const drenagemPredial = {
     if (!(v.nCond >= 1) || !Number.isInteger(v.nCond)) throw new Error("Nº de condutores deve ser inteiro ≥ 1");
     if (!(v.sC >= 0.5)) throw new Error("Declividade da calha ≥ 0,5% (NBR 10844 §5.5.1)");
     if (!(v.sH >= 0.5)) throw new Error("Declividade do condutor horizontal ≥ 0,5% (NBR 10844 §5.7.1)");
-    const n = Number(v.mat);
+    const nMan = Number(v.mat);
     const A = (v.a + v.hT / 2) * v.b;               // m²
     const Q = (v.I * A) / 60;                       // L/min
     const Qc = Q / v.nCond;                         // L/min por condutor / trecho de calha
     const Qm3s = Qc / 60000;
     // Calha retangular
     const w = v.wC / 100, sC = v.sC / 100;
-    const y = laminaRetangular(w, Qm3s, n, sC);
+    const y = laminaRetangular(w, Qm3s, nMan, sC);
     const Hcalha = Math.ceil(y * 2 * 100);          // cm (lâmina ≤ metade da altura)
-    const Vc = vazaoRetangular(w, y, n, sC).V;
+    const Vc = vazaoRetangular(w, y, nMan, sC).V;
     // Condutor horizontal (lâmina 2/3 D)
     const sH = v.sH / 100;
-    const cap = DN_PREDIAL.map((D) => ({ D, Q: vazaoCircular(D / 1000, 2 / 3, n, sH).Q * 60000 }));
+    const cap = DN_PREDIAL.map((D) => ({ D, Q: vazaoCircular(D / 1000, 2 / 3, nMan, sH).Q * 60000 }));
     const horiz = cap.find((c) => c.Q >= Qc);
     // Condutor vertical
     const Dv = Math.max(75, horiz ? Math.min(horiz.D, 150) : 150);
+    const steps = [
+      step("A", "Área de contribuição", "A = (a + h/2)·b", `(${n(v.a)} + ${n(v.hT)}/2)·${n(v.b)}`, A, "m²"),
+      step("Q", "Vazão de projeto", "Q = I·A/60", `${n(v.I, 0)}·${n(A)}/60`, Q, "L/min", 1),
+      step("Qc", "Vazão por condutor", "Qc = Q/n", `${n(Q, 1)}/${v.nCond}`, Qc, "L/min", 1),
+      step("y", "Lâmina na calha (Manning)", "Q = (1/n)·A·Rh^(2/3)·S^(1/2) → y", undefined, y * 100, "cm", 1),
+      step("V", "Velocidade na calha", "V = Q/A_m", undefined, Vc, "m/s"),
+    ];
     return {
+      steps,
       val: [
         `── VAZÃO DE PROJETO ─────────────────`,
         `A = (a + h/2)·b = (${v.a} + ${v.hT}/2)·${v.b} = ${fx(A)} m²`,
         `Q = I·A/60 = ${fx(Q, 1)} L/min  (${fx(Q / 60, 2)} L/s)`,
         `Q por condutor/trecho: ${fx(Qc, 1)} L/min  (${v.nCond} condutor(es))`,
         A <= 100 ? `→ cobertura ≤ 100 m²: I = 150 mm/h é aceito pela norma` : `→ use I da Tab. 5 da NBR 10844 para a cidade e o período de retorno`,
-        `── CALHA RETANGULAR (largura ${v.wC} cm, n = ${n}) ──`,
+        `── CALHA RETANGULAR (largura ${v.wC} cm, n = ${nMan}) ──`,
         `Lâmina y = ${fx(y * 100, 1)} cm   V = ${fx(Vc)} m/s`,
         `Altura mínima recomendada: ${Hcalha} cm (lâmina ≤ 50% da altura)`,
         `── CONDUTOR HORIZONTAL (S = ${v.sH}%, y = 2/3·D) ──`,
@@ -547,6 +652,10 @@ const redeUrbana = {
       const r = vazaoCircular(D, yD, v.nMn, v.S);
       return { D, yD, V: r.V };
     };
+    const steps = [
+      step("tc", "Tempo de concentração (Kirpich)", "tc = 0,0195·L^0,77·S^−0,385", `0,0195·${n(v.L, 0)}^0,77·${n(v.S, 3)}^−0,385`, tc, "min", 1),
+      step("Q", "Vazão de projeto (método racional)", "Q = C·i·A/360", `${n(v.C)}·${n(v.i, 0)}·${n(v.A)}/360`, Q, "m³/s", 4),
+    ];
     const lines = [
       `── HIDROLOGIA ───────────────────────`,
       `tc (Kirpich) = ${fx(tc, 1)} min  → use chuva de duração ≈ tc na curva IDF`,
@@ -570,7 +679,7 @@ const redeUrbana = {
       );
     }
     return {
-      val: lines.join("\n"), unit: "", multi: true,
+      val: lines.join("\n"), unit: "", multi: true, steps,
       links: [{ label: `Intensidade de chuva para t = tc (${fx(Math.max(tc, 5), 1)} min)`, area: "civil", calcId: "idf", values: { T: 10, t: Number(fx(Math.max(tc, 5), 1)) } }],
     };
   },
@@ -619,6 +728,10 @@ const idf = {
     if (!(v.T >= 1)) throw new Error("T deve ser ≥ 1 ano");
     pos(v.t, "Duração t");
     const i = idfIntensidade(p.K, p.a, p.b, p.c, v.T, v.t);
+    const steps = [
+      step("i", "Intensidade de chuva", "i = K·T^a/(t + b)^c", `${n(p.K, 1)}·${n(v.T, 0)}^${n(p.a, 3)}/(${n(v.t, 0)} + ${n(p.b, 0)})^${n(p.c, 3)}`, i, "mm/h", 1),
+      step("h", "Altura de chuva", "h = i·t/60", `${n(i, 1)}·${n(v.t, 0)}/60`, (i * v.t) / 60, "mm", 1),
+    ];
     const tabela = [5, 10, 15, 30, 60, 120].map((t) => `t = ${String(t).padStart(3)} min → i = ${fx(idfIntensidade(p.K, p.a, p.b, p.c, v.T, t), 1).padStart(6)} mm/h`);
     return {
       val: [
@@ -632,7 +745,7 @@ const idf = {
         ...tabela,
         v.cidade !== "personalizado" ? `⚠ parâmetros do preset marcados [CONFIRMAR] — confira na fonte/manual municipal` : `→ parâmetros informados pelo usuário`,
       ].join("\n"),
-      unit: "", multi: true,
+      unit: "", multi: true, steps,
       links: [{ label: "Usar esta intensidade na drenagem predial", area: "civil", calcId: "tubos", values: { I: Number(fx(i, 1)), a: 5, hT: 1.5, b: 12, nCond: 1, mat: "0.011", wC: 15, sC: 0.5, sH: 1 } }],
     };
   },
@@ -735,6 +848,30 @@ const laje = {
       const op = sugerirEspacamento(Af, bitolas, 7, sMax);
       return [`${nome}: Md = ${fx(Md)} kN·m/m → As = ${fx(As)} cm²/m ${As < min ? `(mín ${fx(min)})` : ""} → ${op.length ? op.slice(0, 2).map((o) => `φ${o.phi} c/ ${o.s}`).join(" | ") : "⚠ revisar bitola"}`];
     };
+    const AsX = asPorMetro(r.Mx, dx, v.fck, v.fyk), AsY = r.umaDirecao ? null : asPorMetro(r.My, dy, v.fck, v.fyk);
+    const steps = [
+      step("g", "Carga permanente", "g = 25·h + g_rev", `25·${n(v.h / 100)} + ${n(v.grev)}`, g, "kN/m²"),
+      step("pd", "Carga de cálculo", "pd = 1,4·(g + q)", `1,4·(${n(g)} + ${n(v.q)})`, pd, "kN/m²"),
+      step("lam", "Relação entre vãos", "λ = ly/lx", `${n(v.ly)}/${n(v.lx)}`, r.lam, "", 3),
+      ...(r.umaDirecao ? [] : [
+        step("kx", "Parcela da carga na direção x", "kx = cy·ly⁴/(cx·lx⁴ + cy·ly⁴)", undefined, r.kx, "", 3),
+        step("nux", "Correção de torção (x)", "νx = 1 − (20/3)·(kx/mx)·(lx/ly)²", undefined, r.nux, "", 3),
+        step("nuy", "Correção de torção (y)", "νy = 1 − (20/3)·(ky/my)·(ly/lx)²", undefined, r.nuy, "", 3),
+      ]),
+      step("Mx", "Momento positivo x", r.umaDirecao ? "Mx = pd·lx²/m" : "Mx = kx·pd·lx²/mx·νx", undefined, r.Mx, "kN·m/m"),
+      ...(r.umaDirecao ? [] : [step("My", "Momento positivo y", "My = ky·pd·ly²/my·νy", undefined, r.My, "kN·m/m")]),
+      step("dx", "Altura útil x", "dx = h − c − φ/2", `${n(v.h, 1)} − ${n(v.cob)} − 0,5`, dx, "cm"),
+      ...(AsX !== null ? [step("AsX", "Armadura positiva x", "As = Md/(z·fyd) por metro", undefined, AsX, "cm²/m")] : []),
+      ...(AsY !== null && AsY !== undefined ? [step("AsY", "Armadura positiva y", "As = Md/(z·fyd) por metro", undefined, AsY, "cm²/m")] : []),
+      step("AsMinPos", "Armadura positiva mínima", r.umaDirecao ? "As,mín = ρmín·100·h" : "As,mín = 0,67·ρmín·100·h", undefined, AsMinPos, "cm²/m"),
+    ];
+    const kgX = Math.max(AsX ?? 0, AsMinPos) * v.ly * v.lx * KG_POR_CM2_M;
+    const kgY = (r.umaDirecao ? 0 : Math.max(AsY ?? 0, AsMinPos)) * v.lx * v.ly * KG_POR_CM2_M;
+    const materials = [
+      { key: "concreto", label: `Concreto C${v.fck}`, qty: v.lx * v.ly * (v.h / 100), unit: "m³" },
+      { key: "forma", label: "Forma", qty: v.lx * v.ly, unit: "m²" },
+      { key: "aco", label: `Aço CA-${v.fyk / 10}`, qty: kgX + kgY, unit: "kg" },
+    ];
     const secDist = r.umaDirecao ? Math.max(0.2 * Math.max(asPorMetro(r.Mx, dx, v.fck, v.fyk) ?? 0, AsMinPos), 0.5 * rhoMin * 100 * v.h, 0.9) : 0;
     return {
       val: [
@@ -757,8 +894,9 @@ const laje = {
         ...(r.Xx > 0 ? arm("Negativa x", r.Xx, dx, AsMinNeg) : []),
         ...(r.Xy > 0 ? arm("Negativa y", r.Xy, dx, AsMinNeg) : []),
         `⚠ coeficientes pelo método de Marcus — compare com as tabelas de Bares [CONFIRMAR]; flecha da laje não verificada`,
+        ...materialsText(materials, "aço só das armaduras positivas, sem negativas e sem perdas"),
       ].join("\n"),
-      unit: "", multi: true,
+      unit: "", multi: true, steps, materials,
     };
   },
   result: "laje maciça",
@@ -826,7 +964,23 @@ const flechaCA = {
     const psi2 = v.psi2 > 0 ? v.psi2 : 0.3, t0 = v.t0 > 0 ? v.t0 : 1;
     if (psi2 > 1) throw new Error("ψ2 deve estar entre 0 e 1");
     const r = flechaVigaCA({ L: v.L, bw: v.bw, h: v.h, cob: v.cob, fck: v.fck, As: v.As, Asl: v.Asl > 0 ? v.Asl : 0, gk: v.gk, qk: v.qk, psi2, t0 });
+    const steps = [
+      step("Ecs", "Módulo de elasticidade secante", "Ecs = αi·5600·√fck", `${n(Math.min(0.8 + (0.2 * v.fck) / 80, 1), 4)}·5600·√${n(v.fck, 0)}`, r.Ecs, "MPa", 0),
+      step("Ic", "Inércia da seção bruta", "Ic = bw·h³/12", `${n(v.bw, 1)}·${n(v.h, 1)}³/12`, r.Ic, "cm⁴", 0),
+      step("Mr", "Momento de fissuração", "Mr = 1,5·fct,m·Ic/yt", `1,5·${n(fctm(v.fck), 3)}·${n(r.Ic, 0)}/${n(v.h / 2, 1)}`, r.Mr, "kN·m"),
+      step("ae", "Relação entre módulos", "αe = Es/Ecs", `210000/${n(r.Ecs, 0)}`, r.ae, "", 3),
+      step("x", "Linha neutra no estádio II", "bw·x²/2 = αe·As·(d − x)", undefined, r.x, "cm"),
+      step("III", "Inércia no estádio II", "I_II = bw·x³/3 + αe·As·(d − x)²", undefined, r.III, "cm⁴", 0),
+      step("pqp", "Carga quase permanente", "pqp = g + ψ2·q", `${n(v.gk)} + ${n(psi2)}·${n(v.qk)}`, r.pqp, "kN/m"),
+      step("Ma", "Momento atuante", "Ma = pqp·L²/8", `${n(r.pqp)}·${n(v.L)}²/8`, r.Ma, "kN·m"),
+      step("Ieq", "Inércia equivalente (Branson)", "Ieq = (Mr/Ma)³·Ic + [1 − (Mr/Ma)³]·I_II", undefined, r.Ieq, "cm⁴", 0),
+      step("d0", "Flecha imediata", "δ0 = 5·pqp·L⁴/(384·E·I)", `5·${n(r.pqp)}·${n(v.L)}⁴/(384·${n(r.EI, 0)})·1000`, r.d0, "mm"),
+      step("af", "Coeficiente de fluência", "αf = Δξ/(1 + 50ρ')", undefined, r.af, "", 3),
+      step("dt", "Flecha total", "δ∞ = δ0·(1 + αf)", `${n(r.d0)}·(1 + ${n(r.af, 3)})`, r.dt, "mm"),
+      step("lim", "Limite visual", "δlim = L/250", `${n(v.L * 1000, 0)}/250`, r.lim, "mm", 1),
+    ];
     return {
+      steps,
       val: [
         `── MATERIAL E SEÇÃO ─────────────────`,
         `Ecs = ${fx(r.Ecs, 0)} MPa   αe = Es/Ecs = ${fx(r.ae, 2)}   d = ${fx(r.d, 1)} cm`,
@@ -853,7 +1007,7 @@ const flechaCA = {
 const ETA1 = { nervurada: 2.25, entalhada: 1.4, lisa: 1.0 };
 const ALFA0T = { "20": 1.2, "25": 1.4, "33": 1.6, "50": 1.8, "100": 2.0 };
 
-export function ancoragem({ phi, fck, fyk, barra = "nervurada", boa = true, AsCalc, AsEf, gancho = false, emendadas = "50" }) {
+export function ancoragem({ phi, fck, fyk, barra = "nervurada", boa = true, AsCalc = undefined, AsEf = undefined, gancho = false, emendadas = "50" }) {
   const n1 = ETA1[barra], n2 = boa ? 1 : 0.7, n3 = phi < 32 ? 1 : (132 - phi) / 100;
   const fbd = n1 * n2 * n3 * fctdOf(fck);           // MPa
   const fyd = fydOf(fyk);
@@ -905,13 +1059,25 @@ const ancoragemCalc = {
     ] },
   ],
   example: { phi: 16, fck: 25, fyk: 500, barra: "nervurada", aderencia: "boa", gancho: "reta", emendadas: "50" },
+  references: REFS_CIVIL.ancoragem,
   calc(v) {
     pos(v.phi, "φ"); checkFck(v.fck); checkFyk(v.fyk);
     if ((v.AsCalc > 0) !== (v.AsEf > 0)) throw new Error("Informe As calculada e As efetiva juntas (ou nenhuma)");
     if (v.AsCalc > v.AsEf) throw new Error("As calculada não pode ser maior que a efetiva");
     const r = ancoragem({ phi: v.phi, fck: v.fck, fyk: v.fyk, barra: v.barra, boa: v.aderencia === "boa", AsCalc: v.AsCalc, AsEf: v.AsEf, gancho: v.gancho === "gancho", emendadas: v.emendadas });
     const cm = (mm) => `${fx(mm / 10, 1)} cm (${fx(mm / v.phi, 1)}φ)`;
+    const lbCalc = (v.phi / 4) * (r.fyd / r.fbd);
+    const steps = [
+      step("fctd", "Resistência de cálculo à tração", "fctd = 0,7·0,3·fck^(2/3)/1,4", `0,7·0,3·${n(v.fck, 0)}^(2/3)/1,4`, fctdOf(v.fck), "MPa", 3),
+      step("fbd", "Resistência de aderência", "fbd = η1·η2·η3·fctd", `${n(r.n1)}·${n(r.n2, 1)}·${n(r.n3)}·${n(fctdOf(v.fck), 3)}`, r.fbd, "MPa", 3),
+      step("fyd", "Resistência de cálculo do aço", "fyd = fyk/1,15", `${n(v.fyk, 0)}/1,15`, r.fyd, "MPa"),
+      step("lb", "Comprimento de ancoragem básico", "lb = (φ/4)·(fyd/fbd) ≥ 25φ", `(${n(v.phi / 10, 2)}/4)·(${n(r.fyd)}/${n(r.fbd, 3)})${lbCalc < 25 * v.phi ? " → 25φ" : ""}`, r.lb / 10, "cm"),
+      step("lbmin", "Comprimento mínimo", "lb,mín = máx(0,3·lb; 10φ; 10 cm)", undefined, r.lbmin / 10, "cm"),
+      step("lbnec", "Comprimento necessário", "lb,nec = α·lb·As,calc/As,ef ≥ lb,mín", `${n(r.alfa, 1)}·${n(r.lb / 10)}·${n(r.ratio, 3)}`, r.lbnec / 10, "cm"),
+      step("l0t", "Emenda por traspasse", "l0t = α0t·lb,nec ≥ l0t,mín", `${n(r.a0t, 1)}·${n(r.lbnec / 10)}`, r.l0t / 10, "cm"),
+    ];
     return {
+      steps,
       val: [
         `── ADERÊNCIA ────────────────────────`,
         `η1 = ${r.n1}   η2 = ${r.n2}   η3 = ${fx(r.n3, 2)}   fctd = ${fx(fctdOf(v.fck), 3)} MPa`,
@@ -977,7 +1143,25 @@ const materiais = {
     const aco = taxa * V;
     const C = consumoCimento(v.a, v.p, v.ac);
     const cim = C * V, areia = v.a * C * V, brita = v.p * C * V, agua = v.ac * C * V;
+    const steps = [
+      step("V", "Volume de concreto", "V = n·c·b·h", `${v.n}·${n(v.c)}·${n(b)}·${n(h)}`, V, "m³", 3),
+      step("forma", "Área de forma", { viga: "(2h + b)·c·n", pilar: "2(b + h)·c·n", laje: "[c·b + 2(c + b)·h]·n", sapata: "2(c + b)·h·n" }[v.elem], undefined, forma, "m²"),
+      step("aco", "Aço por taxa", "Aço = taxa·V", `${n(taxa, 0)}·${n(V, 3)}`, aco, "kg", 1),
+      step("C", "Consumo de cimento", "C = 1000/(1/3,15 + a/2,65 + p/2,70 + a/c)", `1000/(1/3,15 + ${n(v.a)}/2,65 + ${n(v.p)}/2,70 + ${n(v.ac)})`, C, "kg/m³", 1),
+      step("cim", "Cimento", "cimento = C·V", `${n(C, 1)}·${n(V, 3)}`, cim, "kg", 1),
+      step("areia", "Areia", "areia = a·C·V", `${n(v.a)}·${n(C, 1)}·${n(V, 3)}`, areia, "kg", 1),
+      step("brita", "Brita", "brita = p·C·V", `${n(v.p)}·${n(C, 1)}·${n(V, 3)}`, brita, "kg", 1),
+      step("agua", "Água", "água = (a/c)·C·V", `${n(v.ac)}·${n(C, 1)}·${n(V, 3)}`, agua, "L", 1),
+    ];
+    const materials = [
+      { key: "cimento", label: "Cimento (saco 50 kg)", qty: cim / 50, unit: "sacos" },
+      { key: "areia", label: "Areia", qty: areia / 1000 / MASSA_UNIT.areia, unit: "m³" },
+      { key: "brita", label: "Brita", qty: brita / 1000 / MASSA_UNIT.brita, unit: "m³" },
+      { key: "forma", label: "Forma", qty: forma, unit: "m²" },
+      { key: "aco", label: "Aço CA-50", qty: aco, unit: "kg" },
+    ];
     return {
+      steps, materials,
       val: [
         `── CONCRETO ─────────────────────────`,
         `V = ${v.n}·${v.c}·${fx(b)}·${fx(h)} = ${fx(V, 3)} m³`,
@@ -992,6 +1176,7 @@ const materiais = {
         `brita:   ${fx(brita, 1)} kg (≈ ${fx(brita / 1000 / MASSA_UNIT.brita, 3)} m³)`,
         `água:    ${fx(agua, 1)} L`,
         `⚠ sem perdas — acrescente 5–10% para compra; massas unitárias aproximadas`,
+        ...materialsText(materials, "concreto feito na obra; sem perdas"),
       ].join("\n"),
       unit: "", multi: true,
     };
